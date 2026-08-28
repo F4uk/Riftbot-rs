@@ -2,10 +2,13 @@
 
 Stage: P0 — Foundation
 
-Status: IMPLEMENTED — AWAITING GPT GATE 0
+Status: GATE 0 PASS WITH FIXES — REQUIRED FIXES PUBLISHED; P1 NOT STARTED
 
-Pinned project commit: this Gate 0 publication commit on `main`; resolve with `git rev-parse HEAD`
-after publication
+Published P0 commit: `38fcc7cc8caa51ebddcbe34255791373ef34b21d`
+
+Gate 0 CI fix commit: `bd6884d021f88e8a652ffaae071b9cc213f77f16`
+
+Hosted CI: SUCCESS — run `33165428896` for the CI fix commit, completed 2026-08-28
 
 ## Implemented
 
@@ -25,6 +28,10 @@ after publication
 - Added the frozen module skeleton and ownership boundaries without implementing P1-P9 behavior.
 - Added GitHub Actions gates for exact dependency policy, likely credential detection, format,
   Clippy, tests, and official adapter compilation.
+- Hardened hosted CI after Gate 0 review: all third-party Actions use immutable commit SHAs, and a
+  standard-library Python scanner evaluates the exact Git tracked-file set without assuming `rg`
+  exists. Git/TOML/encoding errors are hard failures, Cargo Git dependencies require a full exact
+  `rev`, and credential findings report locations without printing matched values.
 
 ## Architecture
 
@@ -51,15 +58,20 @@ No QuantGuy or CJ source was copied or translated.
 
 ## Tests
 
+- repository policy: PASS — `python3 scripts/ci_policy.py all`; 60 tracked files checked in hosted
+  CI
 - fmt: PASS — `cargo fmt --check`
-- clippy: PASS — `cargo clippy --all-targets --all-features -- -D warnings`
-- unit: PASS — `cargo test --all-targets --all-features`; 14 passed, 0 failed, 0 ignored
+- clippy: PASS — `cargo clippy --locked --all-targets --all-features -- -D warnings`
+- unit: PASS — `cargo test --locked --all-targets --all-features`; 14 passed, 0 failed, 0 ignored,
+  0 measured, 0 filtered out
 - integration: not applicable to P0; adapter API compatibility is compiled under the optional
   feature
 - replay: not implemented until P2; P0 verifies invalid intent data cannot bypass invariants during
   deserialization
 - adapter compatibility: PASS — `cargo check --locked --features nautilus-adapters`
 - lock source: PASS — model, Hyperliquid, and Lighter all resolve to the complete selected SHA
+- hosted CI: SUCCESS — all required steps passed in 4m4s at
+  `https://github.com/F4uk/Riftbot-rs/actions/runs/33165428896`
 
 The Windows MSVC linker emitted its informational localized “creating library/object” message while
 linking tests; it did not represent a Rust warning or test failure.
@@ -83,8 +95,7 @@ linking tests; it did not represent a Rust warning or test failure.
 - No recorder/replay, measurement math, grid strategy, runtime risk enforcement, execution state
   machine, reconciliation, or trading behavior exists.
 - The initial commit is published directly to `main` as explicitly requested, so there is no PR.
-  Hosted CI starts only after the push; the complete required command set passed locally before
-  publication.
+  Both the complete local command set and hosted CI passed after the Gate 0 fixes.
 
 ## Risks
 
@@ -97,8 +108,8 @@ linking tests; it did not represent a Rust warning or test failure.
 
 ## Deviations from taskbook
 
-None in implemented scope. Direct initial publication to `main` follows the explicit release
-instruction; local checks are not presented as hosted CI results.
+None in implemented scope. Direct publication to `main` follows the explicit release instruction;
+hosted results above are linked separately from local verification.
 
 ## Security / secrets
 
@@ -107,7 +118,8 @@ instruction; local checks are not presented as hosted CI results.
 - Build outputs, coverage artifacts, environment files, local/live configuration, recordings,
   common private-key/certificate files, Cargo credentials, and `secrets/` are ignored and were
   verified with `git check-ignore`.
-- Conservative credential-assignment scan: PASS.
+- Deterministic tracked-file credential scan: PASS locally and in hosted CI; scanner/tool failures
+  fail the job.
 - Production panic/unsafe/silent-result-ignore pattern scan: PASS.
 
 ## License/IP check
@@ -119,14 +131,16 @@ instruction; local checks are not presented as hosted CI results.
 
 ## Recommended next step
 
-Run GPT Gate 0 against architecture, exact upstream pin, license boundaries, and P0 scope. Do not
-begin P1 until the gate returns permission to proceed.
+Perform the short Gate 0 re-review of the published fixes. Do not begin P1 until the gate explicitly
+permits it.
 
 ## GPT Gate package
 
 - PR: not used; initial Gate 0 material is published directly to `main` as requested
 - diff: all project files except the pre-existing `PROJECT_TASKBOOK.md` constitute the P0 addition
-- CI: local equivalents all PASS
+- initial P0 commit: `38fcc7cc8caa51ebddcbe34255791373ef34b21d`
+- CI fix commit: `bd6884d021f88e8a652ffaae071b9cc213f77f16`
+- hosted CI: SUCCESS — `https://github.com/F4uk/Riftbot-rs/actions/runs/33165428896`
 - relevant docs: `CURRENT_STATE.md`, `ARCHITECTURE.md`, `UPSTREAM_SOURCES.md`,
   `docs/plans/P0_PLAN.md`, this report
 
