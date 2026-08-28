@@ -33,7 +33,7 @@ impl FeedKey {
 struct FeedLifecycle {
     connection: FeedConnectionState,
     last_transition_ts: UnixNanos,
-    awaiting_recovery_data: bool,
+    recovery_after_ts: Option<UnixNanos>,
 }
 
 /// Invalid or regressive update rejected by the store.
@@ -101,27 +101,35 @@ impl BookStore {
             });
         }
 
-        let awaiting_recovery_data = match state {
-            FeedConnectionState::Connected => self
-                .feeds
-                .get(&key)
-                .is_some_and(|current| current.awaiting_recovery_data),
+        let recovery_after_ts = match state {
+            FeedConnectionState::Connected => match self.feeds.get(&key) {
+                Some(current)
+                    if current.connection == FeedConnectionState::Connected
+                        && current.recovery_after_ts.is_none() =>
+                {
+                    None
+                }
+                _ => Some(transition_ts),
+            },
             FeedConnectionState::Connecting
             | FeedConnectionState::Reconnecting
-            | FeedConnectionState::Disconnected => true,
+            | FeedConnectionState::Disconnected => Some(transition_ts),
         };
         self.feeds.insert(
             key,
             FeedLifecycle {
                 connection: state,
                 last_transition_ts: transition_ts,
-                awaiting_recovery_data,
+                recovery_after_ts,
             },
         );
         Ok(())
     }
 
-    /// Inserts a newer normalized snapshot and marks the feed recovered.
+    /// Inserts a newer normalized snapshot without changing transport state.
+    ///
+    /// A connected feed awaiting recovery is released only by data whose local receive timestamp
+    /// is strictly later than the explicit connection transition which established the barrier.
     pub fn update(&mut self, mut book: VenueBook) -> Result<(), BookStoreError> {
         let key = FeedKey::new(book.venue_id.clone(), book.instrument_id.clone());
         if let Some(current) = self.books.get(&key) {
@@ -140,19 +148,15 @@ impl BookStore {
         }
 
         book.age_ms = DurationMillis(0);
-        let transition_ts = self
-            .feeds
-            .get(&key)
-            .map_or(book.receive_ts, |feed| feed.last_transition_ts);
+        if let Some(feed) = self.feeds.get_mut(&key)
+            && feed.connection == FeedConnectionState::Connected
+            && feed
+                .recovery_after_ts
+                .is_some_and(|barrier| book.receive_ts > barrier)
+        {
+            feed.recovery_after_ts = None;
+        }
         self.books.insert(key.clone(), book);
-        self.feeds.insert(
-            key,
-            FeedLifecycle {
-                connection: FeedConnectionState::Connected,
-                last_transition_ts: transition_ts,
-                awaiting_recovery_data: false,
-            },
-        );
         Ok(())
     }
 
@@ -171,7 +175,7 @@ impl BookStore {
         let lifecycle = self.feeds.get(key)?;
         let book = self.books.get(key);
         let age_ms = book.map(|book| age_at(book.receive_ts, now));
-        let freshness = if lifecycle.awaiting_recovery_data {
+        let freshness = if lifecycle.recovery_after_ts.is_some() {
             FeedFreshness::AwaitingRecovery
         } else if let Some(age) = age_ms {
             if age > self.stale_after_ms {
@@ -272,6 +276,183 @@ mod tests {
         assert_eq!(stale.freshness, FeedFreshness::Stale);
         assert!(!stale.is_healthy());
         assert!(store.healthy_book(&key, UnixNanos(2_601_000_000)).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn disconnected_then_newer_book_does_not_become_connected() -> Result<(), Box<dyn Error>> {
+        let mut store = BookStore::new(DurationMillis(1_500))?;
+        let key = key()?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Connected,
+            UnixNanos(1_000_000_000),
+        )?;
+        store.update(book(1, 1_100_000_000)?)?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Disconnected,
+            UnixNanos(1_200_000_000),
+        )?;
+        store.update(book(2, 1_300_000_000)?)?;
+
+        let health = store
+            .health(&key, UnixNanos(1_300_000_000))
+            .expect("feed exists");
+        assert_eq!(health.connection, FeedConnectionState::Disconnected);
+        assert_eq!(health.freshness, FeedFreshness::AwaitingRecovery);
+        assert!(!health.is_healthy());
+        Ok(())
+    }
+
+    #[test]
+    fn reconnecting_then_book_does_not_become_connected() -> Result<(), Box<dyn Error>> {
+        let mut store = BookStore::new(DurationMillis(1_500))?;
+        let key = key()?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Connected,
+            UnixNanos(1_000_000_000),
+        )?;
+        store.update(book(1, 1_100_000_000)?)?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Reconnecting,
+            UnixNanos(1_200_000_000),
+        )?;
+        store.update(book(2, 1_300_000_000)?)?;
+
+        let health = store
+            .health(&key, UnixNanos(1_300_000_000))
+            .expect("feed exists");
+        assert_eq!(health.connection, FeedConnectionState::Reconnecting);
+        assert_eq!(health.freshness, FeedFreshness::AwaitingRecovery);
+        assert!(!health.is_healthy());
+        Ok(())
+    }
+
+    #[test]
+    fn connected_after_reconnect_still_awaits_recovery() -> Result<(), Box<dyn Error>> {
+        let mut store = BookStore::new(DurationMillis(1_500))?;
+        let key = key()?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Connected,
+            UnixNanos(1_000_000_000),
+        )?;
+        store.update(book(1, 1_100_000_000)?)?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Disconnected,
+            UnixNanos(1_200_000_000),
+        )?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Reconnecting,
+            UnixNanos(1_300_000_000),
+        )?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Connected,
+            UnixNanos(1_400_000_000),
+        )?;
+
+        let health = store
+            .health(&key, UnixNanos(1_400_000_000))
+            .expect("feed exists");
+        assert_eq!(health.connection, FeedConnectionState::Connected);
+        assert_eq!(health.freshness, FeedFreshness::AwaitingRecovery);
+        assert!(!health.is_healthy());
+        Ok(())
+    }
+
+    #[test]
+    fn pre_transition_book_does_not_clear_recovery() -> Result<(), Box<dyn Error>> {
+        let mut store = BookStore::new(DurationMillis(1_500))?;
+        let key = key()?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Connected,
+            UnixNanos(1_000_000_000),
+        )?;
+        store.update(book(1, 2_000_000_000)?)?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Reconnecting,
+            UnixNanos(2_100_000_000),
+        )?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Connected,
+            UnixNanos(3_000_000_000),
+        )?;
+        store.update(book(2, 2_500_000_000)?)?;
+
+        let health = store
+            .health(&key, UnixNanos(3_000_000_000))
+            .expect("feed exists");
+        assert_eq!(health.freshness, FeedFreshness::AwaitingRecovery);
+        assert!(!health.is_healthy());
+        Ok(())
+    }
+
+    #[test]
+    fn post_transition_newer_book_clears_recovery() -> Result<(), Box<dyn Error>> {
+        let mut store = BookStore::new(DurationMillis(1_500))?;
+        let key = key()?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Connected,
+            UnixNanos(1_000_000_000),
+        )?;
+        store.update(book(1, 2_000_000_000)?)?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Reconnecting,
+            UnixNanos(2_100_000_000),
+        )?;
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Connected,
+            UnixNanos(3_000_000_000),
+        )?;
+        store.update(book(2, 3_100_000_000)?)?;
+
+        let health = store
+            .health(&key, UnixNanos(3_100_000_000))
+            .expect("feed exists");
+        assert_eq!(health.freshness, FeedFreshness::Fresh);
+        assert!(health.is_healthy());
+        Ok(())
+    }
+
+    #[test]
+    fn healthy_book_remains_none_until_both_connected_and_recovered() -> Result<(), Box<dyn Error>>
+    {
+        let mut store = BookStore::new(DurationMillis(1_500))?;
+        let key = key()?;
+        store.update(book(1, 1_000_000_000)?)?;
+        assert!(store.healthy_book(&key, UnixNanos(1_000_000_000)).is_none());
+
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Connecting,
+            UnixNanos(1_100_000_000),
+        )?;
+        store.update(book(2, 1_200_000_000)?)?;
+        assert!(store.healthy_book(&key, UnixNanos(1_200_000_000)).is_none());
+
+        store.set_connection_state(
+            key.clone(),
+            FeedConnectionState::Connected,
+            UnixNanos(1_300_000_000),
+        )?;
+        assert!(store.healthy_book(&key, UnixNanos(1_300_000_000)).is_none());
+        store.update(book(3, 1_250_000_000)?)?;
+        assert!(store.healthy_book(&key, UnixNanos(1_300_000_000)).is_none());
+
+        store.update(book(4, 1_400_000_000)?)?;
+        assert!(store.healthy_book(&key, UnixNanos(1_400_000_000)).is_some());
         Ok(())
     }
 
