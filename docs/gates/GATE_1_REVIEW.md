@@ -12,7 +12,9 @@ Decision requested: review P1 Connectivity only.
 - Book state and health: `src/market/book_store.rs`
 - Nautilus conversion boundary: `src/market/nautilus_bridge.rs`
 - Manual official-adapter probe: `src/bin/p1_connectivity.rs`
-- Hosted CI: [run 33167667553](https://github.com/F4uk/Riftbot-rs/actions/runs/33167667553)
+- Gate 1 fix: `ff7787bf825f61082db6a4a44955b20bc327100c`
+- Corrective hosted CI:
+  [run 33212266899](https://github.com/F4uk/Riftbot-rs/actions/runs/33212266899), conclusion `success`
 
 ## Gate checklist
 
@@ -22,6 +24,9 @@ Decision requested: review P1 Connectivity only.
 - [x] Produces normalized, ordered, uncrossed depth books.
 - [x] Tracks exchange time, receive time, current age, freshness, and feed connection health.
 - [x] Fails closed on stale or post-reconnect pre-recovery books.
+- [x] Book data never promotes transport state; only an explicit Connected event can do so.
+- [x] Recovery requires a book whose receive timestamp is strictly newer than the Connected
+  transition barrier.
 - [x] Demonstrates official transport reconnect events and fresh recovery books on all feeds.
 - [x] Selects exactly one evidence-backed V1 symbol: `SNDK`.
 - [x] Keeps hosted CI green.
@@ -32,7 +37,8 @@ Decision requested: review P1 Connectivity only.
 1. Confirm that the official adapter boundary is preserved and no venue protocol is reimplemented.
 2. Confirm that `MarketNormalizer` and `BookStore` behavior is sufficient for P1 but does not
    implement spread or strategy semantics.
-3. Confirm that disconnect/reconnect cannot return a feed to healthy until a newer book arrives.
+3. Confirm that disconnect/reconnect cannot return a feed to healthy until an explicit Connected
+   event and a strictly post-transition book have both arrived.
 4. Confirm the live evidence justifies the single `SNDK` selection.
 5. Confirm the branch should stop at GPT Gate 1.
 
