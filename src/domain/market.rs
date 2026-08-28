@@ -31,3 +31,44 @@ pub struct VenueBook {
     pub age_ms: DurationMillis,
     pub version: BookVersion,
 }
+
+/// Public market-data connection lifecycle for one venue feed.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedConnectionState {
+    Connecting,
+    Connected,
+    Reconnecting,
+    Disconnected,
+}
+
+/// Freshness of the last accepted book independently of connection state.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedFreshness {
+    Missing,
+    AwaitingRecovery,
+    Fresh,
+    Stale,
+}
+
+/// Auditable health snapshot for a single venue and instrument feed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FeedHealth {
+    pub venue_id: VenueId,
+    pub instrument_id: InstrumentId,
+    pub connection: FeedConnectionState,
+    pub freshness: FeedFreshness,
+    pub last_transition_ts: UnixNanos,
+    pub last_exchange_ts: Option<UnixNanos>,
+    pub last_receive_ts: Option<UnixNanos>,
+    pub age_ms: Option<DurationMillis>,
+}
+
+impl FeedHealth {
+    /// Returns true only after a connected feed has supplied a fresh recovery book.
+    #[must_use]
+    pub fn is_healthy(&self) -> bool {
+        self.connection == FeedConnectionState::Connected && self.freshness == FeedFreshness::Fresh
+    }
+}

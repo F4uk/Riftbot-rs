@@ -2,12 +2,22 @@
 
 use std::str::FromStr;
 
-use nautilus_model::identifiers::{
-    InstrumentId as NautilusInstrumentId, InstrumentIdError as NautilusInstrumentIdError,
+use nautilus_model::{
+    data::{OrderBookDepth10, order::BookOrder},
+    identifiers::{
+        InstrumentId as NautilusInstrumentId, InstrumentIdError as NautilusInstrumentIdError,
+    },
 };
 use thiserror::Error;
 
-use crate::domain::ids::InstrumentId;
+use crate::{
+    domain::{
+        ids::{IdentifierError, InstrumentId, VenueId},
+        market::BookVersion,
+        numeric::UnixNanos,
+    },
+    market::normalizer::{RawBookLevel, RawBookSnapshot},
+};
 
 /// Failed conversion at the Nautilus boundary.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -15,6 +25,9 @@ pub enum NautilusBridgeError {
     /// The domain value did not satisfy Nautilus' instrument ID syntax.
     #[error("invalid Nautilus instrument ID: {0}")]
     InvalidInstrument(#[from] NautilusInstrumentIdError),
+    /// A Nautilus identifier failed the domain defensive checks.
+    #[error("invalid domain instrument ID: {0}")]
+    InvalidDomainInstrument(#[from] IdentifierError),
 }
 
 /// Parses a domain instrument identifier using the pinned Nautilus API.
@@ -22,6 +35,35 @@ pub fn to_nautilus_instrument_id(
     instrument_id: &InstrumentId,
 ) -> Result<NautilusInstrumentId, NautilusBridgeError> {
     NautilusInstrumentId::from_str(instrument_id.as_str()).map_err(Into::into)
+}
+
+/// Converts an official adapter depth-10 event into the unvalidated normalization input.
+/// Zero-sized array placeholders are omitted.
+pub fn depth10_snapshot(
+    venue_id: VenueId,
+    depth: &OrderBookDepth10,
+    version: BookVersion,
+) -> Result<RawBookSnapshot, NautilusBridgeError> {
+    Ok(RawBookSnapshot {
+        venue_id,
+        instrument_id: InstrumentId::try_from(depth.instrument_id.to_string())?,
+        bids: non_zero_levels(&depth.bids),
+        asks: non_zero_levels(&depth.asks),
+        exchange_ts: UnixNanos(depth.ts_event.as_u64()),
+        receive_ts: UnixNanos(depth.ts_init.as_u64()),
+        version,
+    })
+}
+
+fn non_zero_levels(orders: &[BookOrder]) -> Vec<RawBookLevel> {
+    orders
+        .iter()
+        .filter(|order| !order.size.is_zero())
+        .map(|order| RawBookLevel {
+            price: order.price.as_decimal(),
+            quantity: order.size.as_decimal(),
+        })
+        .collect()
 }
 
 /// Compile-only names for the official target adapter configuration APIs.
