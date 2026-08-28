@@ -95,3 +95,22 @@ P0 implementation is complete and awaiting GPT Gate 0 review. The repository now
 
 The next allowed action is GPT Gate 0 review. P1 connectivity must not begin unless Gate 0 permits
 it.
+
+## Post-P1 status
+
+GPT Gate 0 passed, and P1 Connectivity is now implemented on `codex/p1-connectivity` and awaiting
+GPT Gate 1. The repository now additionally has:
+
+- Official pinned-adapter discovery for Entropy/io, trade.xyz/xyz, and Lighter Mainnet.
+- A live public depth-10 probe with exchange/receive timestamps and forced reconnect recovery.
+- Deterministic `MarketNormalizer` and versioned `BookStore` freshness/health behavior.
+- Evidence-backed selection of exactly one V1 symbol, `SNDK`.
+- P1 evidence, report, and Gate 1 review materials.
+
+| Stage | Current status | Evidence |
+|---|---|---|
+| P0 Foundation | Gate 0 passed | `docs/stages/P0_REPORT.md` |
+| P1 Connectivity | Implemented; Gate 1 pending | `docs/stages/P1_REPORT.md`, `docs/evidence/P1_CONNECTIVITY.json` |
+| P2-P9 | Not started | No later-stage behavior added |
+
+The next allowed action is GPT Gate 1 review. P2 must not begin unless Gate 1 permits it.
