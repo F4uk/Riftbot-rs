@@ -1,0 +1,63 @@
+schema_version = 1
+
+[runtime]
+mode = "signal_only"
+
+[[venues]]
+id = "entropy"
+kind = "hyperliquid_hip3"
+enabled = true
+
+[[venues]]
+id = "trade_xyz"
+kind = "hyperliquid_hip3"
+enabled = true
+
+[[venues]]
+id = "lighter"
+kind = "lighter"
+enabled = true
+
+[market_data]
+stale_after_ms = 1500
+minimum_depth_notional = "100.00"
+estimated_slippage_bps = "2.00"
+
+[fair_value]
+window_samples = 3600
+minimum_samples = 300
+
+[[grid.levels]]
+deviation_bps = "5.00"
+target_fraction = "0.20"
+
+[[grid.levels]]
+deviation_bps = "10.00"
+target_fraction = "0.40"
+
+[[grid.levels]]
+deviation_bps = "15.00"
+target_fraction = "0.60"
+
+[[grid.levels]]
+deviation_bps = "20.00"
+target_fraction = "0.80"
+
+[[grid.levels]]
+deviation_bps = "25.00"
+target_fraction = "1.00"
+
+[risk]
+max_venue_notional = "1000.00"
+max_pair_notional = "1500.00"
+max_global_delta = "25.00"
+max_session_loss = "100.00"
+
+[execution]
+max_residual_delta = "10.00"
+max_slippage_bps = "5.00"
+intent_expiry_ms = 3000
+
+[recording]
+directory = "recordings"
+channel_capacity = 8192

@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  p0:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Reject floating Git dependencies
+        shell: bash
+        run: |
+          if rg -n 'branch\s*=' --glob 'Cargo.toml' .; then
+            echo 'Floating Git branch dependency detected.' >&2
+            exit 1
+          fi
+
+      - name: Scan for likely committed credentials
+        shell: bash
+        run: |
+          pattern='(?i)(api[_-]?key|secret|private[_-]?key|mnemonic|password)[[:space:]]*[:=][[:space:]]*["'"']?[A-Za-z0-9+/=_-]{12,}'
+          if rg -n --hidden "$pattern" \
+            --glob '!PROJECT_TASKBOOK.md' \
+            --glob '!Cargo.lock' \
+            --glob '!.github/workflows/ci.yml' .; then
+            echo 'Potential credential material detected.' >&2
+            exit 1
+          fi
+
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-features
+      - run: cargo check --locked --features nautilus-adapters

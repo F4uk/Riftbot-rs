@@ -1,0 +1,26 @@
+[package]
+name = "riftbot"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.0"
+publish = false
+description = "Foundation for a deterministic multi-venue perpetual arbitrage engine"
+
+[features]
+default = []
+nautilus-adapters = ["dep:nautilus-hyperliquid", "dep:nautilus-lighter"]
+
+[dependencies]
+nautilus-model = { git = "https://github.com/nautechsystems/nautilus_trader", rev = "e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c", features = ["high-precision"] }
+nautilus-hyperliquid = { git = "https://github.com/nautechsystems/nautilus_trader", rev = "e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c", optional = true }
+nautilus-lighter = { git = "https://github.com/nautechsystems/nautilus_trader", rev = "e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c", optional = true }
+rust_decimal = { version = "1.40.0", features = ["serde-str"] }
+serde = { version = "1.0.219", features = ["derive"] }
+thiserror = "2.0.16"
+toml = "0.9.5"
+
+[dev-dependencies]
+serde_json = "1.0.143"
+
+[lints.rust]
+unsafe_code = "forbid"
