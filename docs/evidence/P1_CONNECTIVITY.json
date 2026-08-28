@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-08-28T11:31:47Z",
+  "nautilus_revision": "e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c",
+  "environments": {
+    "hyperliquid": "mainnet",
+    "lighter": "mainnet"
+  },
+  "discovery": {
+    "entropy_io_active": 2,
+    "trade_xyz_active": 103,
+    "lighter_active_perpetuals": 213,
+    "io_lighter_common_bases": [
+      "SNDK"
+    ],
+    "xyz_lighter_common_bases": [
+      "AAOI",
+      "AAPL",
+      "AMD",
+      "AMZN",
+      "ARM",
+      "ASML",
+      "AVGO",
+      "BABA",
+      "BB",
+      "BE",
+      "BOT",
+      "BRENTOIL",
+      "CBRS",
+      "COIN",
+      "CRCL",
+      "CRWV",
+      "CXMT",
+      "DELL",
+      "DRAM",
+      "EWY",
+      "GEV",
+      "GME",
+      "GOOGL",
+      "HOOD",
+      "IBM",
+      "INTC",
+      "KIOXIA",
+      "KORU",
+      "LITE",
+      "META",
+      "MINIMAX",
+      "MRNA",
+      "MRVL",
+      "MSFT",
+      "MSTR",
+      "MU",
+      "NATGAS",
+      "NBIS",
+      "NOK",
+      "NOW",
+      "NVDA",
+      "ORCL",
+      "PLTR",
+      "QCOM",
+      "QNT",
+      "RKLB",
+      "SKHY",
+      "SNDK",
+      "SOXL",
+      "SPCX",
+      "STRC",
+      "TSLA",
+      "TSM",
+      "UNITREE",
+      "WDC",
+      "ZHIPU"
+    ],
+    "io_xyz_lighter_common_bases": [
+      "SNDK"
+    ]
+  },
+  "selection": {
+    "symbol": "SNDK",
+    "pair_venues": [
+      "entropy",
+      "lighter"
+    ],
+    "instruments": [
+      "io:SNDK-USD-PERP.HYPERLIQUID",
+      "SNDK-PERP.LIGHTER"
+    ],
+    "trade_xyz_validation_instrument": "xyz:SNDK-USD-PERP.HYPERLIQUID"
+  },
+  "observations": [
+    {
+      "venue": "entropy",
+      "instrument_id": "io:SNDK-USD-PERP.HYPERLIQUID",
+      "samples_before_reconnect": 3,
+      "samples_after_reconnect": 1,
+      "first_exchange_ts": 1787916695030000128,
+      "last_exchange_ts": 1787916705284999936,
+      "first_receive_ts": 1787916696730537000,
+      "last_receive_ts": 1787916706881889800,
+      "last_best_bid": "1455.70",
+      "last_best_ask": "1455.80"
+    },
+    {
+      "venue": "lighter",
+      "instrument_id": "SNDK-PERP.LIGHTER",
+      "samples_before_reconnect": 65,
+      "samples_after_reconnect": 1,
+      "first_exchange_ts": 1787916695594000000,
+      "last_exchange_ts": 1787916705769000000,
+      "first_receive_ts": 1787916697092099300,
+      "last_receive_ts": 1787916707074414000,
+      "last_best_bid": "1456.84",
+      "last_best_ask": "1456.85"
+    },
+    {
+      "venue": "trade_xyz",
+      "instrument_id": "xyz:SNDK-USD-PERP.HYPERLIQUID",
+      "samples_before_reconnect": 3,
+      "samples_after_reconnect": 1,
+      "first_exchange_ts": 1787916695030000128,
+      "last_exchange_ts": 1787916705284999936,
+      "first_receive_ts": 1787916696741535200,
+      "last_receive_ts": 1787916706892659100,
+      "last_best_bid": "1456.000",
+      "last_best_ask": "1456.100"
+    }
+  ],
+  "final_health": [
+    {
+      "venue": "entropy",
+      "connection": "connected",
+      "freshness": "fresh",
+      "age_ms": 193
+    },
+    {
+      "venue": "lighter",
+      "connection": "connected",
+      "freshness": "fresh",
+      "age_ms": 0
+    },
+    {
+      "venue": "trade_xyz",
+      "connection": "connected",
+      "freshness": "fresh",
+      "age_ms": 182
+    }
+  ],
+  "reconnect": {
+    "hyperliquid_request_accepted": true,
+    "hyperliquid_reconnected_event": true,
+    "lighter_request_outcome": "Accepted",
+    "lighter_reconnected_event": true,
+    "recovery_book_observed_on_all_feeds": true
+  }
+}

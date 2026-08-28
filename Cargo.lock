@@ -4263,11 +4263,14 @@ version = "0.1.0"
 dependencies = [
  "nautilus-hyperliquid",
  "nautilus-lighter",
+ "nautilus-live",
  "nautilus-model",
+ "nautilus-network",
  "rust_decimal",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "toml 0.9.12+spec-1.1.0",
 ]
 

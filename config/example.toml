@@ -18,6 +18,12 @@ id = "lighter"
 kind = "lighter"
 enabled = true
 
+[pair]
+id = "sndk_entropy_lighter"
+symbol = "SNDK"
+venues = ["entropy", "lighter"]
+instruments = ["io:SNDK-USD-PERP.HYPERLIQUID", "SNDK-PERP.LIGHTER"]
+
 [market_data]
 stale_after_ms = 1500
 minimum_depth_notional = "100.00"

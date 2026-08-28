@@ -9,18 +9,30 @@ description = "Foundation for a deterministic multi-venue perpetual arbitrage en
 [features]
 default = []
 nautilus-adapters = ["dep:nautilus-hyperliquid", "dep:nautilus-lighter"]
+p1-connectivity = [
+    "nautilus-adapters",
+    "dep:nautilus-live",
+    "dep:nautilus-network",
+    "dep:tokio",
+]
 
 [dependencies]
 nautilus-model = { git = "https://github.com/nautechsystems/nautilus_trader", rev = "e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c", features = ["high-precision"] }
 nautilus-hyperliquid = { git = "https://github.com/nautechsystems/nautilus_trader", rev = "e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c", optional = true }
 nautilus-lighter = { git = "https://github.com/nautechsystems/nautilus_trader", rev = "e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c", optional = true }
+nautilus-live = { git = "https://github.com/nautechsystems/nautilus_trader", rev = "e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c", default-features = false, optional = true }
+nautilus-network = { git = "https://github.com/nautechsystems/nautilus_trader", rev = "e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c", optional = true }
 rust_decimal = { version = "1.40.0", features = ["serde-str"] }
 serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
 thiserror = "2.0.16"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"], optional = true }
 toml = "0.9.5"
 
-[dev-dependencies]
-serde_json = "1.0.143"
+[[bin]]
+name = "p1-connectivity"
+path = "src/bin/p1_connectivity.rs"
+required-features = ["p1-connectivity"]
 
 [lints.rust]
 unsafe_code = "forbid"
