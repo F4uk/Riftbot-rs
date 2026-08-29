@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::{
     domain::{
-        ids::{ModelVersion, PairId, Symbol, VenueId},
+        ids::{DecisionId, ModelVersion, PairId, Symbol, VenueId},
         inventory::{EffectiveActual, EffectiveInventory, InventoryDomainError, TargetInventory},
         numeric::{BaseQty, Bps, Money, Notional, NumericError, UnixNanos},
         spread::MeasurementValidity,
@@ -93,6 +93,7 @@ pub enum IncreaseBlockReason {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InventoryDecision {
+    pub decision_id: DecisionId,
     pub pair_id: PairId,
     pub symbol: Symbol,
     pub action: InventoryAction,
@@ -202,6 +203,7 @@ impl InventoryManager {
         let target_value = current_route.target_notional_per_leg().value();
         if opposite_increase && measurement_basis(opposite_route, opposite_measurement).is_ok() {
             return Ok(InventoryDecision {
+                decision_id: current_route.decision_id.clone(),
                 pair_id: current_route.pair_id.clone(),
                 symbol: current_route.symbol.clone(),
                 action: InventoryAction::FlattenForReversal,
@@ -318,6 +320,7 @@ fn increase_decision(
         Ok(basis) => {
             let proposed = required.min(basis.measured_executable_notional.value());
             Ok(InventoryDecision {
+                decision_id: target.decision_id.clone(),
                 pair_id: target.pair_id.clone(),
                 symbol: target.symbol.clone(),
                 action: InventoryAction::IncreaseRisk,
@@ -330,6 +333,7 @@ fn increase_decision(
             })
         }
         Err(reason) => Ok(InventoryDecision {
+            decision_id: target.decision_id.clone(),
             pair_id: target.pair_id.clone(),
             symbol: target.symbol.clone(),
             action: InventoryAction::IncreaseBlocked,
@@ -353,6 +357,7 @@ fn reduction_decision(
         .checked_sub(current.total_notional_per_leg.value())
         .ok_or(InventoryManagerError::Arithmetic)?;
     Ok(InventoryDecision {
+        decision_id: target.decision_id.clone(),
         pair_id: target.pair_id.clone(),
         symbol: target.symbol.clone(),
         action: InventoryAction::ReduceRisk,
@@ -370,6 +375,7 @@ fn no_change_decision(
     current: EffectiveActual,
 ) -> Result<InventoryDecision, InventoryManagerError> {
     Ok(InventoryDecision {
+        decision_id: target.decision_id.clone(),
         pair_id: target.pair_id.clone(),
         symbol: target.symbol.clone(),
         action: InventoryAction::NoChange,
@@ -388,6 +394,7 @@ fn neutral_decision(
     block_reason: IncreaseBlockReason,
 ) -> Result<InventoryDecision, InventoryManagerError> {
     Ok(InventoryDecision {
+        decision_id: target.decision_id.clone(),
         pair_id: target.pair_id.clone(),
         symbol: target.symbol.clone(),
         action,
