@@ -4,6 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     io,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -42,6 +43,7 @@ use riftbot::{
         nautilus_bridge::depth10_snapshot,
         normalizer::MarketNormalizer,
     },
+    recording::{recorder::BufferedRecorder, replay::ReplayEngine, schema::RecordedEvent},
 };
 use serde::Serialize;
 
@@ -120,6 +122,17 @@ struct ValidationEvidence {
     observations: Vec<BookObservation>,
     final_health: Vec<FeedHealth>,
     reconnect: ReconnectEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recording: Option<RecordingValidationEvidence>,
+}
+
+#[derive(Debug, Serialize)]
+struct RecordingValidationEvidence {
+    schema_version: u16,
+    event_count: u64,
+    content_sha256: String,
+    replay_twice_identical: bool,
+    replay_final_feed_count: usize,
 }
 
 struct Targets {
@@ -131,10 +144,11 @@ struct Targets {
 struct FeedProbe {
     store: BookStore,
     observations: BTreeMap<String, BookObservation>,
+    recorder: Option<BufferedRecorder>,
 }
 
 impl FeedProbe {
-    fn new(targets: &Targets) -> ProbeResult<Self> {
+    fn new(targets: &Targets, recorder: Option<BufferedRecorder>) -> ProbeResult<Self> {
         let mut observations = BTreeMap::new();
         for (label, venue, instrument_id) in [
             ("entropy_io", "entropy", targets.io),
@@ -160,6 +174,7 @@ impl FeedProbe {
         Ok(Self {
             store: BookStore::new(DurationMillis(5_000))?,
             observations,
+            recorder,
         })
     }
 
@@ -169,8 +184,12 @@ impl FeedProbe {
         state: FeedConnectionState,
         transition_ts: UnixNanos,
     ) -> ProbeResult<()> {
+        let key = self.key(label)?;
         self.store
-            .set_connection_state(self.key(label)?, state, transition_ts)?;
+            .set_connection_state(key.clone(), state, transition_ts)?;
+        if let Some(recorder) = &self.recorder {
+            recorder.try_record(RecordedEvent::feed_connection(&key, state, transition_ts)?)?;
+        }
         Ok(())
     }
 
@@ -205,7 +224,10 @@ impl FeedProbe {
         let receive_ts = book.receive_ts.0;
         let best_bid = book.bids[0].price.value().to_string();
         let best_ask = book.asks[0].price.value().to_string();
-        self.store.update(book)?;
+        self.store.update(book.clone())?;
+        if let Some(recorder) = &self.recorder {
+            recorder.try_record(RecordedEvent::market_book(&book)?)?;
+        }
 
         if recovery {
             observation.samples_after_reconnect += 1;
@@ -244,8 +266,9 @@ impl FeedProbe {
         ))
     }
 
-    fn final_health(&self, now: UnixNanos) -> ProbeResult<Vec<FeedHealth>> {
-        self.observations
+    fn final_health(&mut self, now: UnixNanos) -> ProbeResult<Vec<FeedHealth>> {
+        let health: Vec<FeedHealth> = self
+            .observations
             .keys()
             .map(|label| {
                 let key = self.key(label)?;
@@ -253,22 +276,36 @@ impl FeedProbe {
                     io::Error::other(format!("missing final health for {label}")).into()
                 })
             })
-            .collect()
+            .collect::<ProbeResult<_>>()?;
+        if let Some(recorder) = &self.recorder {
+            for feed_health in &health {
+                recorder.try_record(RecordedEvent::feed_health(now, feed_health.clone())?)?;
+            }
+        }
+        Ok(health)
     }
 }
 
 #[tokio::main]
 async fn main() -> ProbeResult<()> {
-    let command = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "discover".to_owned());
+    let mut arguments = std::env::args().skip(1);
+    let command = arguments.next().unwrap_or_else(|| "discover".to_owned());
+    let recording_path = match command.as_str() {
+        "record-validate" => {
+            Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                io::Error::other("record-validate requires an output path")
+            })?))
+        }
+        _ => None,
+    };
     let bootstrap = discover().await?;
     match command.as_str() {
         "discover" => println!("{}", serde_json::to_string_pretty(&bootstrap.evidence)?),
-        "validate" => validate(bootstrap).await?,
+        "validate" | "record-validate" => validate(bootstrap, recording_path).await?,
         _ => {
             return Err(io::Error::other(format!(
-                "unsupported command '{command}'; expected 'discover' or 'validate'"
+                "unsupported command '{command}'; expected 'discover', 'validate', or \
+                 'record-validate <path>'"
             ))
             .into());
         }
@@ -344,7 +381,10 @@ async fn discover() -> ProbeResult<DiscoveryBootstrap> {
     })
 }
 
-async fn validate(bootstrap: DiscoveryBootstrap) -> ProbeResult<()> {
+async fn validate(
+    bootstrap: DiscoveryBootstrap,
+    recording_path: Option<PathBuf>,
+) -> ProbeResult<()> {
     if !bootstrap
         .evidence
         .io_xyz_lighter_common_bases
@@ -405,7 +445,11 @@ async fn validate(bootstrap: DiscoveryBootstrap) -> ProbeResult<()> {
     .with_socket_control(lighter_control);
     lighter_ws.cache_instruments(lighter_cache);
 
-    let mut probe = FeedProbe::new(&targets)?;
+    let recorder = recording_path
+        .as_ref()
+        .map(|path| BufferedRecorder::create(path, 16_384))
+        .transpose()?;
+    let mut probe = FeedProbe::new(&targets, recorder)?;
     probe.transition_all(FeedConnectionState::Connecting, now_nanos()?)?;
     hyperliquid_ws.connect().await.map_err(|error| {
         io::Error::other(format!(
@@ -459,6 +503,29 @@ async fn validate(bootstrap: DiscoveryBootstrap) -> ProbeResult<()> {
         bootstrap.evidence.lighter.len(),
     );
     let recovery_book_observed_on_all_feeds = probe.recovery_complete();
+    let recording = match (recording_path, probe.recorder.take()) {
+        (Some(path), Some(recorder)) => {
+            let summary = recorder.shutdown()?;
+            let engine = ReplayEngine::new(DurationMillis(5_000))?;
+            let first = engine.replay_file(&path)?;
+            let second = engine.replay_file(&path)?;
+            let replay_twice_identical = first == second;
+            if !replay_twice_identical {
+                return Err(io::Error::other("live recording replay was not deterministic").into());
+            }
+            Some(RecordingValidationEvidence {
+                schema_version: summary.schema_version,
+                event_count: summary.event_count,
+                content_sha256: summary.content_sha256,
+                replay_twice_identical,
+                replay_final_feed_count: first.final_feeds.len(),
+            })
+        }
+        (None, None) => None,
+        _ => {
+            return Err(io::Error::other("recording path and recorder state diverged").into());
+        }
+    };
     let evidence = ValidationEvidence {
         schema_version: 1,
         nautilus_revision: NAUTILUS_REVISION,
@@ -474,6 +541,7 @@ async fn validate(bootstrap: DiscoveryBootstrap) -> ProbeResult<()> {
             lighter_reconnected_event: lighter_reconnected,
             recovery_book_observed_on_all_feeds,
         },
+        recording,
     };
     println!("{}", serde_json::to_string_pretty(&evidence)?);
     Ok(())
