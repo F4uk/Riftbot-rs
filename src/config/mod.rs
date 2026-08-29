@@ -3,10 +3,13 @@
 mod schema;
 mod validation;
 
+mod fingerprint;
+
+pub use fingerprint::{MeasurementConfigFingerprint, measurement_config_fingerprint};
 pub use schema::{
-    AppConfig, ExecutionConfig, FairValueConfig, GridConfig, GridLevelConfig, MarketDataConfig,
-    PairConfig, RecordingConfig, RiskLimitsConfig, RuntimeConfig, RuntimeMode, StrategyConfig,
-    VenueConfig, VenueKind,
+    AppConfig, ExecutionConfig, FairValueConfig, FundingConfig, FundingStateConfig, GridConfig,
+    GridLevelConfig, MarketDataConfig, PairConfig, RecordingConfig, RegimeConfig, RiskLimitsConfig,
+    RouteFundingConfig, RuntimeConfig, RuntimeMode, StrategyConfig, VenueConfig, VenueKind,
 };
 pub use validation::ConfigError;
 
@@ -86,5 +89,27 @@ mod tests {
             parse_toml(&legacy_version),
             Err(ConfigError::UnsupportedSchema(1))
         ));
+    }
+
+    #[test]
+    fn available_funding_requires_a_signed_value() -> Result<(), ConfigError> {
+        let mut config = parse_toml(EXAMPLE)?;
+        config.funding.routes[0].state = super::FundingStateConfig::Available;
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidFundingRoutes)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn regime_thresholds_preserve_severity_order() -> Result<(), ConfigError> {
+        let mut config = parse_toml(EXAMPLE)?;
+        config.regime.reduce_only_deviation_bps = config.regime.halted_deviation_bps;
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidRegimeThresholds)
+        ));
+        Ok(())
     }
 }

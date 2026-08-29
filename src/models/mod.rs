@@ -1,4 +1,7 @@
-//! Pure model boundaries. No model behavior is implemented during P0.
+//! Pure P3 measurement model boundaries.
+
+/// Stable implementation version included in every P3 output and evidence artifact.
+pub const P3_MODEL_VERSION: &str = "p3-measurement-v1";
 
 pub mod fair_value;
 pub mod grid_inventory;

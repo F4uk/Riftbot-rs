@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::{
     ids::{InstrumentId, PairId, Symbol, VenueId},
-    numeric::{Bps, Delta, DurationMillis, Fraction, Notional},
+    numeric::{BaseQty, Bps, Delta, DurationMillis, Fraction, Notional},
 };
 
 /// Root versioned configuration schema.
@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub pair: Option<PairConfig>,
     pub market_data: MarketDataConfig,
     pub fair_value: FairValueConfig,
+    pub funding: FundingConfig,
+    pub regime: RegimeConfig,
     pub strategy: StrategyConfig,
     pub grid: GridConfig,
     pub risk: RiskLimitsConfig,
@@ -73,7 +75,9 @@ pub struct PairConfig {
 #[serde(deny_unknown_fields)]
 pub struct MarketDataConfig {
     pub stale_after_ms: DurationMillis,
+    pub max_receive_skew_ms: DurationMillis,
     pub minimum_depth_notional: Notional,
+    pub requested_base_quantity: BaseQty,
     pub execution_buffer_bps: Bps,
 }
 
@@ -85,6 +89,41 @@ pub struct FairValueConfig {
     pub window_duration_ms: DurationMillis,
     pub minimum_samples: usize,
     pub max_sample_age_ms: DurationMillis,
+}
+
+/// Availability of one route's signed funding adjustment.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FundingStateConfig {
+    Unavailable,
+    Disabled,
+    Available,
+}
+
+/// Signed funding economics for one explicit oriented route.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteFundingConfig {
+    pub long_venue: VenueId,
+    pub short_venue: VenueId,
+    pub state: FundingStateConfig,
+    pub adjustment_bps: Option<Bps>,
+}
+
+/// Both independent V1 route funding contracts.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FundingConfig {
+    pub routes: Vec<RouteFundingConfig>,
+}
+
+/// Explainable measurement-only regime thresholds. P3 owns classification behavior.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegimeConfig {
+    pub degraded_dispersion_bps: Bps,
+    pub reduce_only_deviation_bps: Bps,
+    pub halted_deviation_bps: Bps,
 }
 
 /// Strategy-owned target ceiling. P4 implements target-inventory behavior.

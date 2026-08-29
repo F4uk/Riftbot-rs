@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use rust_decimal::Decimal;
 use thiserror::Error;
 
-use super::schema::AppConfig;
+use super::schema::{AppConfig, FundingStateConfig};
 use crate::domain::ids::VenueId;
 
 /// Invalid configuration detected before any runtime component starts.
@@ -34,6 +34,12 @@ pub enum ConfigError {
         "fair-value sampling durations must be positive and minimum samples must fit the window"
     )]
     InvalidFairValueWindow,
+    /// Route funding state/value shape or pair orientation was invalid.
+    #[error("funding routes must exactly cover both pair orientations and match state/value rules")]
+    InvalidFundingRoutes,
+    /// Measurement regime thresholds were negative or non-monotonic.
+    #[error("regime thresholds must be non-negative with reduce-only below halted")]
+    InvalidRegimeThresholds,
     /// Grid levels were empty or non-monotonic.
     #[error(
         "grid levels must have strictly increasing non-negative deviations and target fractions"
@@ -103,6 +109,11 @@ impl AppConfig {
                 field: "market_data.stale_after_ms",
             });
         }
+        if self.market_data.max_receive_skew_ms.0 == 0 {
+            return Err(ConfigError::NonPositiveLimit {
+                field: "market_data.max_receive_skew_ms",
+            });
+        }
 
         let sample_interval_ms = self.fair_value.sample_interval_ms.0;
         let window_duration_ms = self.fair_value.window_duration_ms.0;
@@ -117,6 +128,8 @@ impl AppConfig {
         }
 
         validate_grid(self)?;
+        validate_funding(self)?;
+        validate_regime(self)?;
         validate_positive_limits(self)?;
 
         if self.strategy.max_target_notional.value() >= self.risk.max_pair_notional.value() {
@@ -153,6 +166,57 @@ fn validate_grid(config: &AppConfig) -> Result<(), ConfigError> {
         }
         previous_deviation = deviation;
         previous_target = target;
+    }
+    Ok(())
+}
+
+fn validate_funding(config: &AppConfig) -> Result<(), ConfigError> {
+    let Some(pair) = &config.pair else {
+        return if config.funding.routes.is_empty() {
+            Ok(())
+        } else {
+            Err(ConfigError::InvalidFundingRoutes)
+        };
+    };
+    if config.funding.routes.len() != 2 {
+        return Err(ConfigError::InvalidFundingRoutes);
+    }
+    let expected = [
+        (&pair.venues[0], &pair.venues[1]),
+        (&pair.venues[1], &pair.venues[0]),
+    ];
+    for (long_venue, short_venue) in expected {
+        let Some(route) = config
+            .funding
+            .routes
+            .iter()
+            .find(|route| &route.long_venue == long_venue && &route.short_venue == short_venue)
+        else {
+            return Err(ConfigError::InvalidFundingRoutes);
+        };
+        let valid_shape = match route.state {
+            FundingStateConfig::Available => route.adjustment_bps.is_some(),
+            FundingStateConfig::Unavailable | FundingStateConfig::Disabled => {
+                route.adjustment_bps.is_none()
+            }
+        };
+        if !valid_shape {
+            return Err(ConfigError::InvalidFundingRoutes);
+        }
+    }
+    Ok(())
+}
+
+fn validate_regime(config: &AppConfig) -> Result<(), ConfigError> {
+    let degraded = config.regime.degraded_dispersion_bps.value();
+    let reduce_only = config.regime.reduce_only_deviation_bps.value();
+    let halted = config.regime.halted_deviation_bps.value();
+    if degraded < Decimal::ZERO
+        || reduce_only < Decimal::ZERO
+        || halted < Decimal::ZERO
+        || reduce_only >= halted
+    {
+        return Err(ConfigError::InvalidRegimeThresholds);
     }
     Ok(())
 }
