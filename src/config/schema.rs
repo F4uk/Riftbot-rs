@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::{
     ids::{InstrumentId, PairId, Symbol, VenueId},
-    numeric::{BaseQty, Bps, Delta, DurationMillis, Fraction, Notional},
+    numeric::{BaseQty, Bps, Delta, DurationMillis, Notional, TargetFraction},
 };
 
 /// Root versioned configuration schema.
@@ -145,7 +145,7 @@ pub struct GridConfig {
 #[serde(deny_unknown_fields)]
 pub struct GridLevelConfig {
     pub deviation_bps: Bps,
-    pub target_fraction: Fraction,
+    pub target_fraction: TargetFraction,
 }
 
 /// Hard monetary limits. P5 owns enforcement.

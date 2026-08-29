@@ -13,9 +13,9 @@ pub enum NumericError {
     /// A value that must be non-negative was negative.
     #[error("{unit} must be non-negative, received {value}")]
     MustBeNonNegative { unit: &'static str, value: Decimal },
-    /// A fraction was outside the inclusive range from -1 to 1.
-    #[error("fraction must be between -1 and 1, received {value}")]
-    FractionOutOfRange { value: Decimal },
+    /// A target fraction was outside the inclusive range from 0 to 1.
+    #[error("target fraction must be between 0 and 1, received {value}")]
+    TargetFractionOutOfRange { value: Decimal },
 }
 
 macro_rules! signed_decimal_newtype {
@@ -142,16 +142,16 @@ impl TryFrom<Decimal> for Notional {
     }
 }
 
-/// Signed target fraction in the inclusive range from -1 to 1.
+/// Non-negative target fraction in the inclusive range from 0 to 1.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(try_from = "Decimal")]
-pub struct Fraction(Decimal);
+pub struct TargetFraction(Decimal);
 
-impl Fraction {
-    /// Creates a bounded target fraction.
+impl TargetFraction {
+    /// Creates a bounded non-negative target fraction.
     pub fn new(value: Decimal) -> Result<Self, NumericError> {
-        if value < Decimal::NEGATIVE_ONE || value > Decimal::ONE {
-            return Err(NumericError::FractionOutOfRange { value });
+        if value < Decimal::ZERO || value > Decimal::ONE {
+            return Err(NumericError::TargetFractionOutOfRange { value });
         }
         Ok(Self(value))
     }
@@ -163,7 +163,7 @@ impl Fraction {
     }
 }
 
-impl TryFrom<Decimal> for Fraction {
+impl TryFrom<Decimal> for TargetFraction {
     type Error = NumericError;
 
     fn try_from(value: Decimal) -> Result<Self, Self::Error> {
@@ -185,7 +185,7 @@ pub struct DurationMillis(pub u64);
 mod tests {
     use rust_decimal::Decimal;
 
-    use super::{Fraction, NumericError, Price};
+    use super::{NumericError, Price, TargetFraction};
 
     #[test]
     fn price_rejects_zero() {
@@ -196,12 +196,28 @@ mod tests {
     }
 
     #[test]
-    fn fraction_enforces_unit_interval() {
-        assert!(Fraction::new(Decimal::NEGATIVE_ONE).is_ok());
-        assert!(Fraction::new(Decimal::ONE).is_ok());
+    fn target_fraction_enforces_non_negative_unit_interval() {
+        assert!(TargetFraction::new(Decimal::ZERO).is_ok());
+        assert!(TargetFraction::new(Decimal::ONE).is_ok());
         assert!(matches!(
-            Fraction::new(Decimal::new(101, 2)),
-            Err(NumericError::FractionOutOfRange { .. })
+            TargetFraction::new(Decimal::new(-1, 2)),
+            Err(NumericError::TargetFractionOutOfRange { .. })
         ));
+        assert!(matches!(
+            TargetFraction::new(Decimal::new(101, 2)),
+            Err(NumericError::TargetFractionOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn target_fraction_deserialization_cannot_bypass_invariant() {
+        assert!(serde_json::from_str::<TargetFraction>(r#""-0.01""#).is_err());
+        assert!(serde_json::from_str::<TargetFraction>(r#""1.01""#).is_err());
+        assert_eq!(
+            serde_json::from_str::<TargetFraction>(r#""0.60""#)
+                .expect("valid target fraction")
+                .value(),
+            Decimal::new(60, 2)
+        );
     }
 }
