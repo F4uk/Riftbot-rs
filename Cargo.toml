@@ -35,5 +35,9 @@ name = "p1-connectivity"
 path = "src/bin/p1_connectivity.rs"
 required-features = ["p1-connectivity"]
 
+[[bin]]
+name = "p3-measurement"
+path = "src/bin/p3_measurement.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
