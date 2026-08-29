@@ -43,16 +43,17 @@ Nautilus 负责：
 
 - executable bid/ask
 - 真实盘口深度
-- spread / premium
-- fee-aware edge
-- midline
+- raw executable premium
+- fair-value midline / natural-spread baseline
+- deviation
+- cost-adjusted tradable edge
 - 数据采集
 - staleness
 - 历史价差统计
 
 QuantGuy 层只回答：
 
-> 当前跨所价格偏离是否真实？偏离多少？扣基础成本后还有多少可交易 edge？
+> 当前跨所 `Deviation` 是否真实？偏离多少？扣除显式成本后还有多少 `TradableEdge`？
 
 QuantGuy **不负责最终仓位、不直接下单**。
 
@@ -62,8 +63,8 @@ QuantGuy **不负责最终仓位、不直接下单**。
 
 CJ 思路被抽象为：
 
-> spread 偏离扩大 → TargetInventory 增加  
-> spread 偏离收缩 → TargetInventory 降低
+> `Deviation` 扩大 → TargetInventory 增加
+> `Deviation` 收缩 → TargetInventory 降低
 
 CJ 层只回答：
 
@@ -588,8 +589,10 @@ Domain ExecutionIntent -> Nautilus Order
 - exchange timestamp
 - receive timestamp
 - fee schedule
-- estimated slippage
-- funding（接口预留）
+- requested executable quantity
+- execution uncertainty assumptions
+- signed funding adjustment and availability state
+- other explicit risk costs
 - venue health
 
 ## 9.2 输出
@@ -597,32 +600,54 @@ Domain ExecutionIntent -> Nautilus Order
 - executable long price
 - executable short price
 - executable notional
-- gross spread bps
+- raw executable premium bps
+- fair-value midline bps
+- deviation bps
 - fee bps
-- slippage bps
-- net executable edge
-- midline
-- deviation
+- depth impact bps
+- execution uncertainty buffer bps
+- signed funding adjustment bps
+- tradable edge bps
 - data quality
 - validity
 
 ---
 
-# 10. Net Executable Edge
+# 10. Executable Premium、Deviation 与 Tradable Edge
 
 V1 禁止使用 last price 产生 live order。
 
-基本公式：
+以下术语与数学定义冻结：
 
 ```text
-NetEdge
-=
-ExecutableSpread
+RawExecutablePremium
+= executable cross-venue premium from real L2 VWAP
+
+FairValueMidline
+= route-specific persistent/natural spread baseline
+
+Deviation
+= RawExecutablePremium - FairValueMidline
+
+TradableEdge
+= DirectionAdjusted(Deviation)
 - Fees
-- EstimatedSlippage
-- FundingAdjustment
-- RiskBuffer
+- ExecutionUncertaintyBuffer
++ SignedFundingAdjustment
+- OtherExplicitRiskCosts
 ```
+
+`DirectionAdjusted(Deviation)` 表示将 route-specific `Deviation` 映射为候选增仓方向的经济收益符号。
+所有费用、buffer 与 funding 必须使用同一方向、同一 bps 分母和同一时间范围。
+
+必须明确：
+
+- absolute cross-venue spread **不是** expected arbitrage profit；
+- persistent/natural spread 属于 `FairValueMidline`，不得计为 edge；
+- 真实 L2 VWAP 已包含可见深度造成的 price impact；`depth_impact_bps` 只用于披露，禁止再次扣减；
+- `GridInventoryModel` 的仓位分段输入是 `Deviation`；
+- `Opportunity` 与 `Risk` 对增加风险必须使用扣除成本后的 `TradableEdge`；
+- `TradableEdge <= 0` 不得批准增加风险。
 
 V1 必须进入计算：
 
@@ -630,19 +655,26 @@ V1 必须进入计算：
 - depth
 - fee
 - staleness
-- basic slippage guard
+- execution uncertainty buffer
+- signed funding availability/state
+- other explicitly configured risk costs
 
 Funding：
 
-- V1 接口预留。
-- 能可靠获取时记录。
-- 是否强制纳入 gate 由 P3 验收决定。
+- V1 不实现独立的 Funding Arbitrage strategy；
+- funding 是 spread-convergence edge 的 signed economic adjustment；
+- `SignedFundingAdjustment` 对候选持仓有利时为正、不利时为负；
+- funding unavailable 不得静默解释为 verified zero；必须保留 unavailable/unknown 状态并 fail closed；
+- 只有显式配置为 disabled 的 funding 才可按 operator policy 贡献零，且状态必须可见、可审计。
 
 ---
 
 # 11. FairValue / Midline
 
 V1 不做 AI。
+
+`FairValueMidline` 估计 route-specific persistent/natural spread baseline。它不是即时可交易利润，
+而是从 `RawExecutablePremium` 中移除的自然价差基线。
 
 优先实现：
 
@@ -706,6 +738,19 @@ HALTED
 ---
 
 # 13. CJ GridInventoryModel
+
+CJ historical-data logic 不是第二个策略；它实现为 `FairValueMidline` / natural-spread baseline estimation。
+CJ segmented-grid logic 是唯一的 inventory/position-sizing strategy。
+
+架构管线冻结为：
+
+```text
+historical observations
+-> FairValueMidline
+-> Deviation
+-> GridInventoryModel
+-> TargetInventory
+```
 
 CJ 思路必须抽象为：
 
@@ -779,10 +824,13 @@ Delta = +20%
 
 ```text
 Measurement valid
-AND NetEdge acceptable
+AND cost-adjusted TradableEdge acceptable
 AND Grid target requires more risk
 AND RiskManager approves
 ```
+
+其中 `GridInventoryModel` 用 `Deviation` 计算 target；`Opportunity` / `Risk` 用 `TradableEdge`
+决定该 target 是否允许增加风险。两者职责不得合并或互相替代。
 
 ---
 
@@ -834,17 +882,21 @@ short_venue
 executable_long_price
 executable_short_price
 executable_notional
-gross_spread_bps
-fee_bps
-estimated_slippage_bps
-funding_adjustment_bps
-risk_buffer_bps
-net_edge_bps
+raw_executable_premium_bps
 midline_bps
 deviation_bps
+fee_bps
+depth_impact_bps
+execution_buffer_bps
+funding_adjustment_bps
+other_explicit_risk_costs_bps[]
+tradable_edge_bps
 timestamp
 validity
 ```
+
+`depth_impact_bps` 已嵌入 `raw_executable_premium_bps`，仅供解释与审计。任何
+`OtherExplicitRiskCosts` 必须逐项命名并可审计，不得藏入 `depth_impact_bps`。
 
 ---
 
@@ -915,10 +967,10 @@ price_guard
 记录：
 
 - input books
-- spread
-- midline
-- deviation
-- net edge
+- raw_executable_premium_bps
+- midline_bps
+- deviation_bps
+- tradable_edge_bps
 - regime
 - current inventory
 - target inventory
@@ -1022,7 +1074,7 @@ Freeze Decision Snapshot
       ↓
 Recheck Feed
       ↓
-Recheck NetEdge
+Recheck TradableEdge
       ↓
 Risk Gate
       ↓
@@ -1489,9 +1541,10 @@ pair
 venue
 state
 reason
-net_edge
-midline
-deviation
+raw_executable_premium_bps
+midline_bps
+deviation_bps
+tradable_edge_bps
 target_inventory
 current_inventory
 residual_delta
@@ -1520,7 +1573,7 @@ Metrics 至少：
 必须覆盖：
 
 - normal spread
-- no edge after fee
+- non-positive tradable edge after costs
 - insufficient depth
 - stale book
 - empty side
@@ -1847,6 +1900,36 @@ Codex 在 P0：
 - midline
 - warmup
 - extreme spread safety
+- frozen `RawExecutablePremium` / `FairValueMidline` / `Deviation` / `TradableEdge` terminology
+- L2 VWAP depth impact is not deducted twice
+- signed funding unavailable/unknown fails closed
+
+Gate 3 强制示例/测试：
+
+```text
+Example A
+midline = 18 bps
+current executable premium = 20 bps
+total costs = 4 bps
+
+deviation = 2 bps
+tradable edge = -2 bps
+=> MUST NOT increase risk
+```
+
+```text
+Example B
+midline = 18 bps
+current executable premium = 43 bps
+total costs = 4 bps
+
+deviation = 25 bps
+tradable edge = 21 bps
+=> economic gate may permit GridInventory to increase target
+```
+
+以上示例假设 candidate direction 的 `DirectionAdjusted(Deviation)` 为正、
+`SignedFundingAdjustment = 0`，且 4 bps 已包含全部适用的 fee、execution buffer 与其他显式风险成本。
 
 ### GPT Gate 3
 
@@ -2092,9 +2175,15 @@ Opportunity {
   symbol,
   long_venue,
   short_venue,
-  net_edge,
-  midline,
-  deviation,
+  raw_executable_premium_bps,
+  midline_bps,
+  deviation_bps,
+  fee_bps,
+  depth_impact_bps,
+  execution_buffer_bps,
+  funding_adjustment_bps,
+  other_explicit_risk_costs_bps[],
+  tradable_edge_bps,
   depth,
   health,
   score

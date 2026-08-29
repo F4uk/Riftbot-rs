@@ -11,21 +11,41 @@ For an explicit route `long venue A / short venue B` and requested base quantity
 - sell VWAP walks B bids for `q`;
 - `raw_executable_premium_bps = (sell_vwap / buy_vwap - 1) * 10_000`;
 - positive raw premium means B can currently be sold above the executable cost of buying A;
-- `midline_bps` is the route-specific rolling median of valid synchronized raw premiums;
-- `deviation_bps = raw_executable_premium_bps - midline_bps`;
-- `net_actionable_edge_bps = deviation_bps - fee_bps - execution_buffer_bps +
-  funding_adjustment_bps`.
+- `RawExecutablePremium` is the executable cross-venue premium from real L2 VWAP and is exposed as
+  `raw_executable_premium_bps`;
+- `FairValueMidline` is the route-specific persistent/natural spread baseline and is exposed as
+  `midline_bps`;
+- `Deviation = RawExecutablePremium - FairValueMidline` and is exposed as `deviation_bps`;
+- `TradableEdge = DirectionAdjusted(Deviation) - Fees - ExecutionUncertaintyBuffer +
+  SignedFundingAdjustment - OtherExplicitRiskCosts` and is exposed as `tradable_edge_bps`.
 
 Depth impact is disclosed as the sum of buy-VWAP impact versus best ask and sell-VWAP impact
 versus best bid. It is already embedded in raw executable VWAP premium and is not subtracted again.
-Funding unavailable is not zero: net edge remains unavailable. Explicitly disabled funding uses a
-visible disabled state and contributes zero by operator policy.
+Absolute cross-venue spread is not expected arbitrage profit, and the persistent natural spread
+must not be counted as edge. Funding is a signed economic adjustment to the spread-convergence
+edge, not an independent V1 Funding Arbitrage strategy. Funding unavailable is not verified zero:
+tradable edge remains unavailable. Explicitly disabled funding uses a visible disabled state and
+contributes zero by operator policy.
+
+`GridInventoryModel` consumes `Deviation` for segmented target sizing. `Opportunity` and `Risk`
+consume cost-adjusted `TradableEdge` when deciding whether increasing risk is economically allowed.
+The CJ historical-data logic is the `FairValueMidline` / natural-spread baseline estimator, not a
+second strategy. CJ segmented-grid logic is the sole inventory/position-sizing strategy:
+
+```text
+historical observations
+-> FairValueMidline
+-> Deviation
+-> GridInventoryModel
+-> TargetInventory
+```
 
 ## Task 1 — Measurement contracts and configuration
 
-- Expand measurement output with typed quantity, VWAP, raw premium, midline, deviation, fees,
-  depth impact, execution buffer, funding state, net edge, feed ages/skew, fair-value confidence,
-  regime, validity, and rejection reason.
+- Expand measurement output with typed quantity, VWAP, `raw_executable_premium_bps`, `midline_bps`,
+  `deviation_bps`, `fee_bps`, `depth_impact_bps`, `execution_buffer_bps`,
+  `funding_adjustment_bps`, separately auditable other explicit risk costs,
+  `tradable_edge_bps`, feed ages/skew, fair-value confidence, regime, validity, and rejection reason.
 - Add typed maximum book age/skew, requested size, route fees, funding state, fair-value window,
   and explainable regime thresholds.
 - Add a stable model version and SHA-256 fingerprint over measurement-affecting configuration.
@@ -49,7 +69,8 @@ skew, sign, precision, fee removal, and no double-counting tests.
   deterministic eviction, and invalid-observation exclusion.
 - Classify only measurement regime (`normal`, `degraded`, `reduce_only`, `halted`) from data quality,
   confidence, deviation, dispersion, and midline instability.
-- Combine market facts and explicit cost assumptions into a signal-only opportunity object.
+- Combine market facts and explicit cost assumptions into a signal-only opportunity object;
+  increasing risk requires a positive, available cost-adjusted `TradableEdge`.
 
 Verification: warm-up, rolling median, eviction, outlier robustness, isolation, regime shift, all
 four regimes, degraded data, volatility, extreme deviation, and confidence tests.
@@ -65,6 +86,16 @@ four regimes, degraded data, volatility, extreme deviation, and confidence tests
 
 ## Task 5 — Gate 3
 
+- Add mandatory contract examples/tests:
+
+  - A: `midline = 18 bps`, `current executable premium = 20 bps`, `total costs = 4 bps` gives
+    `deviation = 2 bps`, `tradable edge = -2 bps`, and MUST NOT increase risk.
+  - B: `midline = 18 bps`, `current executable premium = 43 bps`, `total costs = 4 bps` gives
+    `deviation = 25 bps`, `tradable edge = 21 bps`, and the economic gate may permit
+    `GridInventoryModel` to increase target.
+
+  Both examples assume positive direction-adjusted deviation, zero signed funding adjustment, and
+  total costs covering every applicable fee, execution buffer, and other explicit risk cost.
 - Run repository policy, format, locked Clippy, locked all-feature tests, and pinned adapter check.
 - Publish `docs/stages/P3_REPORT.md`, `docs/gates/GATE_3_REVIEW.md`, and machine-readable measurement
   evidence; push and wait for hosted CI.
