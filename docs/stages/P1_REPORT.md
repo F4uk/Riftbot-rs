@@ -9,7 +9,7 @@ Status: Gate 1 `PASS WITH FIXES`; corrective feed-health patch applied; P1 remai
   `51123fa23be72744600f11fad6f83ae9a90705c4`
 - Official connectivity and evidence commit:
   `d3a9898a7526149401b17b0157af10203372ac12`
-- Gate 1 feed-health fix commit:
+- Final P1 implementation commit (Gate 1 feed-health fix):
   `ff7787bf825f61082db6a4a44955b20bc327100c`
 - Pinned Nautilus revision:
   `e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c`
@@ -123,6 +123,12 @@ Corrective hosted run
 [33212266899](https://github.com/F4uk/Riftbot-rs/actions/runs/33212266899) repeated the policy,
 formatting, locked clippy, 27 locked tests, and pinned adapter compile checks successfully for
 `ff7787bf825f61082db6a4a44955b20bc327100c`.
+
+Final P1 evidence: 27 tests passed and 0 failed; hosted CI run `33212266899` concluded
+`SUCCESS`; the live validation accepted explicit reconnects on both official transports, observed
+post-reconnect recovery on all three feeds, and ended with every feed `connected + fresh`. A
+recovery book is eligible only when its `receive_ts` is strictly later than the explicit
+`Connected` transition timestamp.
 
 ## Scope audit
 

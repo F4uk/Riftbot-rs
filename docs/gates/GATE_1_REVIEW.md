@@ -12,9 +12,14 @@ Decision requested: review P1 Connectivity only.
 - Book state and health: `src/market/book_store.rs`
 - Nautilus conversion boundary: `src/market/nautilus_bridge.rs`
 - Manual official-adapter probe: `src/bin/p1_connectivity.rs`
-- Gate 1 fix: `ff7787bf825f61082db6a4a44955b20bc327100c`
+- Final P1 implementation commit: `ff7787bf825f61082db6a4a44955b20bc327100c`
 - Corrective hosted CI:
-  [run 33212266899](https://github.com/F4uk/Riftbot-rs/actions/runs/33212266899), conclusion `success`
+  [run 33212266899](https://github.com/F4uk/Riftbot-rs/actions/runs/33212266899), conclusion `SUCCESS`
+- Final tests: 27 passed, 0 failed
+- Final live reconnect validation: both official transport reconnects were accepted, every one of
+  the three feeds received a recovery book, and all feeds ended `connected + fresh`
+- Recovery rule: a recovery book's `receive_ts` must be strictly later than the explicit
+  `Connected` transition timestamp
 
 ## Gate checklist
 
