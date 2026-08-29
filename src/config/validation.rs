@@ -123,6 +123,8 @@ impl AppConfig {
             || self.fair_value.max_sample_age_ms.0 == 0
             || minimum_samples == 0
             || minimum_samples > window_duration_ms / sample_interval_ms
+            || sample_interval_ms.checked_mul(1_000_000).is_none()
+            || window_duration_ms.checked_mul(1_000_000).is_none()
         {
             return Err(ConfigError::InvalidFairValueWindow);
         }
