@@ -44,23 +44,53 @@ pub struct GridRouteTarget {
     pub deviation_bps: Bps,
     pub applied_boundary_bps: Option<Bps>,
     pub between_grid_rule: BetweenGridRule,
-    pub target: TargetInventory,
+    pub target_fraction: TargetFraction,
+    pub target_notional_per_leg: Notional,
+    pub reason: String,
+    pub model_version: ModelVersion,
+    pub decision_id: DecisionId,
 }
 
 impl GridRouteTarget {
     #[must_use]
     pub fn target_fraction(&self) -> TargetFraction {
-        self.target.target_fraction
+        self.target_fraction
     }
 
     #[must_use]
     pub fn target_notional_per_leg(&self) -> Notional {
-        self.target.target_notional
+        self.target_notional_per_leg
     }
 
     #[must_use]
     pub fn requests_risk(&self) -> bool {
-        self.target.target_fraction.value() > Decimal::ZERO
+        self.target_fraction.value() > Decimal::ZERO
+    }
+
+    #[must_use]
+    pub fn target_direction(&self) -> TargetDirection {
+        if self.requests_risk() {
+            TargetDirection::LongShort {
+                long_venue: self.long_venue.clone(),
+                short_venue: self.short_venue.clone(),
+            }
+        } else {
+            TargetDirection::Flat
+        }
+    }
+
+    /// Materializes the sole external target only after pair-level arbitration.
+    pub(crate) fn to_target_inventory(&self) -> TargetInventory {
+        TargetInventory {
+            symbol: self.symbol.clone(),
+            pair_id: self.pair_id.clone(),
+            target_fraction: self.target_fraction,
+            target_notional: self.target_notional_per_leg,
+            direction: self.target_direction(),
+            reason: self.reason.clone(),
+            model_version: self.model_version.clone(),
+            decision_id: self.decision_id.clone(),
+        }
     }
 }
 
@@ -132,14 +162,6 @@ impl GridInventoryModel {
             .checked_mul(target_fraction.value())
             .ok_or(GridInventoryError::Arithmetic)?;
         let target_notional = Notional::new(target_notional_value)?;
-        let direction = if target_fraction.value() == Decimal::ZERO {
-            TargetDirection::Flat
-        } else {
-            TargetDirection::LongShort {
-                long_venue: input.long_venue.clone(),
-                short_venue: input.short_venue.clone(),
-            }
-        };
         let reason = applied.map_or_else(
             || "below_first_grid_boundary".to_owned(),
             |level| format!("floor_grid_boundary_{}_bps", level.deviation_bps.value()),
@@ -152,16 +174,11 @@ impl GridInventoryModel {
             deviation_bps: input.deviation_bps,
             applied_boundary_bps: applied.map(|level| level.deviation_bps),
             between_grid_rule: BetweenGridRule::FloorStep,
-            target: TargetInventory {
-                symbol: input.symbol.clone(),
-                pair_id: input.pair_id.clone(),
-                target_fraction,
-                target_notional,
-                direction,
-                reason,
-                model_version: self.model_version.clone(),
-                decision_id: input.decision_id.clone(),
-            },
+            target_fraction,
+            target_notional_per_leg: target_notional,
+            reason,
+            model_version: self.model_version.clone(),
+            decision_id: input.decision_id.clone(),
         })
     }
 }
@@ -231,7 +248,7 @@ mod tests {
             let (_, output) = target(deviation, false)?;
             assert_eq!(output.target_fraction().value(), Decimal::ZERO);
             assert_eq!(output.target_notional_per_leg().value(), Decimal::ZERO);
-            assert_eq!(output.target.direction, TargetDirection::Flat);
+            assert_eq!(output.target_direction(), TargetDirection::Flat);
         }
         Ok(())
     }
@@ -287,14 +304,14 @@ mod tests {
         assert_eq!(forward.target_fraction().value(), Decimal::new(40, 2));
         assert_eq!(reverse.target_fraction().value(), Decimal::new(80, 2));
         assert_eq!(
-            forward.target.direction,
+            forward.target_direction(),
             TargetDirection::LongShort {
                 long_venue: VenueId::try_from("entropy")?,
                 short_venue: VenueId::try_from("lighter")?,
             }
         );
         assert_eq!(
-            reverse.target.direction,
+            reverse.target_direction(),
             TargetDirection::LongShort {
                 long_venue: VenueId::try_from("lighter")?,
                 short_venue: VenueId::try_from("entropy")?,

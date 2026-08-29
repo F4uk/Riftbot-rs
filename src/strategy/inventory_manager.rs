@@ -205,7 +205,7 @@ impl InventoryManager {
                 pair_id: current_route.pair_id.clone(),
                 symbol: current_route.symbol.clone(),
                 action: InventoryAction::FlattenForReversal,
-                selected_target: Some(opposite_route.target.clone()),
+                selected_target: Some(opposite_route.to_target_inventory()),
                 effective_actual: Some(current.clone()),
                 required_change_notional_per_leg: Money::new(-current_value),
                 proposed_change_notional_per_leg: current.total_notional_per_leg,
@@ -232,7 +232,7 @@ fn validate_inputs(
         || forward.symbol != reverse.symbol
         || forward.long_venue != reverse.short_venue
         || forward.short_venue != reverse.long_venue
-        || forward.target.decision_id != reverse.target.decision_id
+        || forward.decision_id != reverse.decision_id
     {
         return Err(InventoryManagerError::TargetIdentityMismatch);
     }
@@ -256,20 +256,12 @@ fn validate_inputs(
 fn validate_target_shape(target: &GridRouteTarget) -> Result<(), InventoryManagerError> {
     let fraction_is_zero = target.target_fraction().value() == Decimal::ZERO;
     let notional_is_zero = target.target_notional_per_leg().value() == Decimal::ZERO;
-    let is_zero = fraction_is_zero && notional_is_zero;
-    if target.long_venue == target.short_venue
-        || target.target.pair_id != target.pair_id
-        || target.target.symbol != target.symbol
-        || fraction_is_zero != notional_is_zero
-    {
+    if target.long_venue == target.short_venue || fraction_is_zero != notional_is_zero {
         return Err(InventoryManagerError::InvalidTargetShape);
     }
-    if (is_zero && !target.target.direction.is_flat())
-        || (!is_zero
-            && !target
-                .target
-                .direction
-                .matches_route(&target.long_venue, &target.short_venue))
+    let direction = target.target_direction();
+    if (fraction_is_zero && !direction.is_flat())
+        || (!fraction_is_zero && !direction.matches_route(&target.long_venue, &target.short_venue))
     {
         return Err(InventoryManagerError::InvalidTargetShape);
     }
@@ -329,7 +321,7 @@ fn increase_decision(
                 pair_id: target.pair_id.clone(),
                 symbol: target.symbol.clone(),
                 action: InventoryAction::IncreaseRisk,
-                selected_target: Some(target.target.clone()),
+                selected_target: Some(target.to_target_inventory()),
                 effective_actual: Some(current.clone()),
                 required_change_notional_per_leg: Money::new(required),
                 proposed_change_notional_per_leg: Notional::new(proposed)?,
@@ -341,7 +333,7 @@ fn increase_decision(
             pair_id: target.pair_id.clone(),
             symbol: target.symbol.clone(),
             action: InventoryAction::IncreaseBlocked,
-            selected_target: Some(target.target.clone()),
+            selected_target: Some(target.to_target_inventory()),
             effective_actual: Some(current.clone()),
             required_change_notional_per_leg: Money::new(required),
             proposed_change_notional_per_leg: Notional::new(Decimal::ZERO)?,
@@ -364,7 +356,7 @@ fn reduction_decision(
         pair_id: target.pair_id.clone(),
         symbol: target.symbol.clone(),
         action: InventoryAction::ReduceRisk,
-        selected_target: Some(target.target.clone()),
+        selected_target: Some(target.to_target_inventory()),
         effective_actual: Some(current.clone()),
         required_change_notional_per_leg: Money::new(required),
         proposed_change_notional_per_leg: Notional::new(-required)?,
@@ -381,7 +373,7 @@ fn no_change_decision(
         pair_id: target.pair_id.clone(),
         symbol: target.symbol.clone(),
         action: InventoryAction::NoChange,
-        selected_target: Some(target.target.clone()),
+        selected_target: Some(target.to_target_inventory()),
         effective_actual: Some(current),
         required_change_notional_per_leg: Money::new(Decimal::ZERO),
         proposed_change_notional_per_leg: Notional::new(Decimal::ZERO)?,
