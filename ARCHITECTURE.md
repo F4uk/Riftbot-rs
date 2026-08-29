@@ -1,6 +1,6 @@
 # Architecture
 
-## P0 boundary map
+## Stage boundary map
 
 ```text
 Nautilus event/types
@@ -14,7 +14,7 @@ domain types (no Nautilus dependency)
         +--> models --> strategy target (future P3/P4)
         +--> risk gate (future P5)
         +--> execution basket --> Nautilus orders (future P6)
-        +--> recording/replay and PnL (future P2/P7+)
+        +--> recording/replay (P2) and PnL (future P7+)
 ```
 
 `domain` and `config` do not import Nautilus types. Future venue-specific event conversion and
@@ -36,6 +36,25 @@ or access a network.
 - Replayable records use explicit timestamps and caller-supplied IDs; P0 generates no random or
   wall-clock-dependent decisions.
 
+## P2 recording and replay boundary
+
+```text
+P1 normalized VenueBook / explicit feed transition / health observation
+        |
+        v
+BufferedRecorder::try_record --bounded FIFO--> background file writer
+        |                                      header + event SHA-256 + file trailer
+        v
+versioned recording
+        |
+        v
+strict full-file validation --> MarketNormalizer --> BookStore --> ReplayReport
+```
+
+Replay has no execution client, trait, callback, or order-event variant. Future account, order, and
+fill shapes are type contracts only and are not accepted by the P2 recording event enum. Replay
+age and freshness use recorded receive/observation timestamps; the replay module imports no clock.
+
 ## Stage ownership
 
 | Module | Responsibility | First implementing stage |
@@ -48,5 +67,5 @@ or access a network.
 | `reconciliation` | startup and continuous venue-truth recovery | P7 |
 | `app` | LiveNode composition, never domain policy | P1 onward |
 
-P0 files in these modules are responsibility markers only unless explicitly documented as a
-domain contract or Nautilus compile bridge.
+Modules not yet reached by the active stage remain responsibility markers unless explicitly
+documented as an earlier-stage domain contract.

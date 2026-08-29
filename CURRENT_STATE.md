@@ -114,3 +114,28 @@ GPT Gate 1. The repository now additionally has:
 | P2-P9 | Not started | No later-stage behavior added |
 
 The next allowed action is GPT Gate 1 review. P2 must not begin unless Gate 1 permits it.
+
+## Post-P2 status
+
+GPT Gate 1 passed. P1 was merged to `main`, hosted run `33223396946` succeeded, and P2 Recorder &
+Replay is implemented on `codex/p2-recorder-replay` for Gate 2 review. The repository now also has:
+
+- A strict schema-v1 JSONL recording container with contiguous sequence numbers, per-event SHA-256,
+  an event count, and a complete-content SHA-256 trailer.
+- A bounded, non-blocking producer API with deterministic FIFO background persistence and
+  shutdown drain/flush/sync semantics.
+- Recorded normalized market books, explicit feed connection transitions, and caller-timestamped
+  feed-health observations.
+- Offline replay through the existing `MarketNormalizer` and `BookStore`, without an execution
+  dependency or live-order hook.
+- Fail-closed version, format, sequence, checksum, truncation, domain, and health validation.
+- A real three-venue public recording whose two replay runs produced identical state/event output.
+
+| Stage | Current status | Evidence |
+|---|---|---|
+| P0 Foundation | Gate 0 passed | `docs/stages/P0_REPORT.md` |
+| P1 Connectivity | Gate 1 passed; merged to `main` | `docs/stages/P1_REPORT.md` |
+| P2 Recorder & Replay | Implemented; Gate 2 pending | `docs/stages/P2_REPORT.md`, `docs/gates/GATE_2_REVIEW.md` |
+| P3-P9 | Not started | No later-stage behavior added |
+
+The next allowed action is GPT Gate 2 review. P3 must not begin unless Gate 2 permits it.
