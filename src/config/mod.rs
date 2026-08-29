@@ -72,6 +72,19 @@ mod tests {
     }
 
     #[test]
+    fn negative_grid_target_is_rejected_during_deserialization() {
+        let negative_target = EXAMPLE.replacen(
+            "target_fraction = \"0.20\"",
+            "target_fraction = \"-0.20\"",
+            1,
+        );
+        assert!(matches!(
+            parse_toml(&negative_target),
+            Err(ConfigError::Parse(_))
+        ));
+    }
+
+    #[test]
     fn fair_value_schedule_must_be_satisfiable() -> Result<(), ConfigError> {
         let mut config = parse_toml(EXAMPLE)?;
         config.fair_value.minimum_samples = 3_601;
