@@ -80,6 +80,9 @@ max_venue_notional = "1000.00"
 max_pair_notional = "1500.00"
 max_global_delta = "25.00"
 max_session_loss = "100.00"
+max_measurement_age_ms = 1500
+degraded_authorization_fraction = "0.50"
+session_loss_action = "flatten"
 
 [execution]
 max_residual_delta = "10.00"

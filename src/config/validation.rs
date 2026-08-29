@@ -51,6 +51,11 @@ pub enum ConfigError {
     /// Strategy target capacity consumed the hard pair limit and left no risk headroom.
     #[error("strategy.max_target_notional must be less than risk.max_pair_notional")]
     InvalidStrategyRiskHeadroom,
+    /// P5 logical-time freshness or conservative degraded policy was invalid.
+    #[error(
+        "risk.max_measurement_age_ms must be positive and degraded_authorization_fraction must be strictly between 0 and 1"
+    )]
+    InvalidRiskPolicy,
     /// Execution safety limits were invalid.
     #[error("execution limits and expiry must be non-negative, with a non-zero expiry")]
     InvalidExecutionLimits,
@@ -133,6 +138,13 @@ impl AppConfig {
         validate_funding(self)?;
         validate_regime(self)?;
         validate_positive_limits(self)?;
+
+        if self.risk.max_measurement_age_ms.0 == 0
+            || self.risk.degraded_authorization_fraction.value() <= Decimal::ZERO
+            || self.risk.degraded_authorization_fraction.value() >= Decimal::ONE
+        {
+            return Err(ConfigError::InvalidRiskPolicy);
+        }
 
         if self.strategy.max_target_notional.value() >= self.risk.max_pair_notional.value() {
             return Err(ConfigError::InvalidStrategyRiskHeadroom);

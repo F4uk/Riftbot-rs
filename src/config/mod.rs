@@ -5,11 +5,15 @@ mod validation;
 
 mod fingerprint;
 
-pub use fingerprint::{MeasurementConfigFingerprint, measurement_config_fingerprint};
+pub use fingerprint::{
+    MeasurementConfigFingerprint, RiskConfigFingerprint, measurement_config_fingerprint,
+    risk_config_fingerprint,
+};
 pub use schema::{
     AppConfig, ExecutionConfig, FairValueConfig, FundingConfig, FundingStateConfig, GridConfig,
     GridLevelConfig, MarketDataConfig, PairConfig, RecordingConfig, RegimeConfig, RiskLimitsConfig,
-    RouteFundingConfig, RuntimeConfig, RuntimeMode, StrategyConfig, VenueConfig, VenueKind,
+    RouteFundingConfig, RuntimeConfig, RuntimeMode, SessionLossAction, StrategyConfig, VenueConfig,
+    VenueKind,
 };
 pub use validation::ConfigError;
 
@@ -122,6 +126,18 @@ mod tests {
         assert!(matches!(
             config.validate(),
             Err(ConfigError::InvalidRegimeThresholds)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn degraded_risk_policy_must_be_conservative() -> Result<(), Box<dyn std::error::Error>> {
+        let mut config = parse_toml(EXAMPLE)?;
+        config.risk.degraded_authorization_fraction =
+            crate::domain::numeric::TargetFraction::new(rust_decimal::Decimal::ONE)?;
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidRiskPolicy)
         ));
         Ok(())
     }

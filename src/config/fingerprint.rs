@@ -6,8 +6,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::{
-    AppConfig, FairValueConfig, MarketDataConfig, PairConfig, RegimeConfig, RouteFundingConfig,
-    VenueConfig,
+    AppConfig, FairValueConfig, MarketDataConfig, PairConfig, RegimeConfig, RiskLimitsConfig,
+    RouteFundingConfig, VenueConfig,
 };
 
 /// Lowercase SHA-256 of the canonical measurement-affecting configuration projection.
@@ -28,6 +28,24 @@ impl fmt::Display for MeasurementConfigFingerprint {
     }
 }
 
+/// Lowercase SHA-256 of the canonical P5 risk-policy configuration projection.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct RiskConfigFingerprint(String);
+
+impl RiskConfigFingerprint {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RiskConfigFingerprint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
 #[derive(Serialize)]
 struct MeasurementConfigProjection<'a> {
     config_schema_version: u16,
@@ -37,6 +55,12 @@ struct MeasurementConfigProjection<'a> {
     fair_value: &'a FairValueConfig,
     funding_routes: Vec<&'a RouteFundingConfig>,
     regime: &'a RegimeConfig,
+}
+
+#[derive(Serialize)]
+struct RiskConfigProjection<'a> {
+    config_schema_version: u16,
+    risk: &'a RiskLimitsConfig,
 }
 
 /// Hashes only fields which can affect P3 measurement output.
@@ -73,14 +97,31 @@ pub fn measurement_config_fingerprint(
     )))
 }
 
+/// Hashes only fields which can affect P5 risk authorization.
+pub fn risk_config_fingerprint(
+    config: &AppConfig,
+) -> Result<RiskConfigFingerprint, serde_json::Error> {
+    let canonical = serde_json::to_vec(&RiskConfigProjection {
+        config_schema_version: config.schema_version,
+        risk: &config.risk,
+    })?;
+    Ok(RiskConfigFingerprint(format!(
+        "{:x}",
+        Sha256::digest(canonical)
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use std::error::Error;
 
     use rust_decimal::Decimal;
 
-    use super::measurement_config_fingerprint;
-    use crate::{config::parse_toml, domain::numeric::Notional};
+    use super::{measurement_config_fingerprint, risk_config_fingerprint};
+    use crate::{
+        config::parse_toml,
+        domain::numeric::{DurationMillis, Notional},
+    };
 
     const EXAMPLE: &str = include_str!("../../config/example.toml");
 
@@ -118,6 +159,19 @@ mod tests {
         let mut reordered = config;
         reordered.funding.routes.reverse();
         assert_eq!(expected, measurement_config_fingerprint(&reordered)?);
+        Ok(())
+    }
+
+    #[test]
+    fn risk_fingerprint_is_stable_and_risk_sensitive() -> Result<(), Box<dyn Error>> {
+        let config = parse_toml(EXAMPLE)?;
+        let expected = risk_config_fingerprint(&config)?;
+        assert_eq!(expected, risk_config_fingerprint(&config)?);
+        assert_eq!(expected.as_str().len(), 64);
+
+        let mut changed = config;
+        changed.risk.max_measurement_age_ms = DurationMillis(1_501);
+        assert_ne!(expected, risk_config_fingerprint(&changed)?);
         Ok(())
     }
 }

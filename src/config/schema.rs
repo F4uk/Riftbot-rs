@@ -156,6 +156,17 @@ pub struct RiskLimitsConfig {
     pub max_pair_notional: Notional,
     pub max_global_delta: Delta,
     pub max_session_loss: Notional,
+    pub max_measurement_age_ms: DurationMillis,
+    pub degraded_authorization_fraction: TargetFraction,
+    pub session_loss_action: SessionLossAction,
+}
+
+/// Persistent-state escalation required when the session-loss limit is reached.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLossAction {
+    Flatten,
+    Halt,
 }
 
 /// V1 basket limits. P6 owns execution behavior.
