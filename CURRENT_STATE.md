@@ -1,6 +1,6 @@
 # Current State and Gap Analysis
 
-Status date: 2026-08-29
+Status date: 2026-08-30
 
 Governing contract: `PROJECT_TASKBOOK.md` V2.1 Mathematical & State Semantics Freeze
 
@@ -167,3 +167,31 @@ repository now also has:
 | P4-P9 | Not started | No later-stage behavior added |
 
 The next allowed action is GPT Gate 3 review. P4 must not begin unless Gate 3 permits it.
+
+## Post-P4 status
+
+GPT Gate 3 passed. P3 was fast-forwarded to `main`, hosted run `33262465076` succeeded, and P4 CJ
+Target Inventory is implemented on `codex/p4-grid-inventory` for Gate 4 review. The repository now
+also has:
+
+- A dedicated `TargetFraction` domain type that rejects values outside `[0, 1]` during construction
+  and deserialization.
+- A deterministic floor-step `GridInventoryModel` mapping each explicit route's `Deviation` to a
+  non-negative matched-notional-per-leg candidate.
+- Pair-level arbitration which emits at most one `TargetInventory` and explicitly blocks opposing
+  simultaneous increase candidates.
+- `EffectiveInventory` / `EffectiveActual` contracts that include actual, reserved, and pending
+  exposure before calculating the target delta.
+- Increase-only P3 economic gating and measured-size caps, reduction-independent edge behavior,
+  and two-step direction reversal.
+
+| Stage | Current status | Evidence |
+|---|---|---|
+| P0 Foundation | Gate 0 passed | `docs/stages/P0_REPORT.md` |
+| P1 Connectivity | Gate 1 passed; merged to `main` | `docs/stages/P1_REPORT.md` |
+| P2 Recorder & Replay | Gate 2 passed | `docs/stages/P2_REPORT.md` |
+| P3 Measurement | Gate 3 passed; merged to `main` | `docs/stages/P3_REPORT.md` |
+| P4 CJ Target Inventory | Implemented; Gate 4 pending | `docs/stages/P4_REPORT.md`, `docs/gates/GATE_4_REVIEW.md` |
+| P5-P9 | Not started | No later-stage behavior added |
+
+The next allowed action is GPT Gate 4 review. P5 must not begin unless Gate 4 permits it.
