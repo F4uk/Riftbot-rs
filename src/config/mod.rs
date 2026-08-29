@@ -5,8 +5,8 @@ mod validation;
 
 pub use schema::{
     AppConfig, ExecutionConfig, FairValueConfig, GridConfig, GridLevelConfig, MarketDataConfig,
-    PairConfig, RecordingConfig, RiskLimitsConfig, RuntimeConfig, RuntimeMode, VenueConfig,
-    VenueKind,
+    PairConfig, RecordingConfig, RiskLimitsConfig, RuntimeConfig, RuntimeMode, StrategyConfig,
+    VenueConfig, VenueKind,
 };
 pub use validation::ConfigError;
 
@@ -27,6 +27,9 @@ mod tests {
     fn example_configuration_is_valid() -> Result<(), ConfigError> {
         let config = parse_toml(EXAMPLE)?;
         assert_eq!(config.venues.len(), 3);
+        assert!(
+            config.strategy.max_target_notional.value() < config.risk.max_pair_notional.value()
+        );
         Ok(())
     }
 
@@ -52,5 +55,36 @@ mod tests {
             Err(ConfigError::DuplicateVenue(_))
         ));
         Ok(())
+    }
+
+    #[test]
+    fn strategy_target_must_preserve_pair_risk_headroom() -> Result<(), ConfigError> {
+        let mut config = parse_toml(EXAMPLE)?;
+        config.strategy.max_target_notional = config.risk.max_pair_notional;
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidStrategyRiskHeadroom)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn fair_value_schedule_must_be_satisfiable() -> Result<(), ConfigError> {
+        let mut config = parse_toml(EXAMPLE)?;
+        config.fair_value.minimum_samples = 3_601;
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidFairValueWindow)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_config_schema_is_rejected() {
+        let legacy_version = EXAMPLE.replacen("schema_version = 2", "schema_version = 1", 1);
+        assert!(matches!(
+            parse_toml(&legacy_version),
+            Err(ConfigError::UnsupportedSchema(1))
+        ));
     }
 }

@@ -9,7 +9,7 @@ use crate::domain::{
     numeric::{Bps, Delta, DurationMillis, Fraction, Notional},
 };
 
-/// Root P0 configuration schema.
+/// Root versioned configuration schema.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
@@ -19,6 +19,7 @@ pub struct AppConfig {
     pub pair: Option<PairConfig>,
     pub market_data: MarketDataConfig,
     pub fair_value: FairValueConfig,
+    pub strategy: StrategyConfig,
     pub grid: GridConfig,
     pub risk: RiskLimitsConfig,
     pub execution: ExecutionConfig,
@@ -73,15 +74,24 @@ pub struct PairConfig {
 pub struct MarketDataConfig {
     pub stale_after_ms: DurationMillis,
     pub minimum_depth_notional: Notional,
-    pub estimated_slippage_bps: Bps,
+    pub execution_buffer_bps: Bps,
 }
 
-/// Robust rolling fair-value window sizes. P3 implements their behavior.
+/// Deterministic logical-time fair-value sampling contract. P3 implements its behavior.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FairValueConfig {
-    pub window_samples: usize,
+    pub sample_interval_ms: DurationMillis,
+    pub window_duration_ms: DurationMillis,
     pub minimum_samples: usize,
+    pub max_sample_age_ms: DurationMillis,
+}
+
+/// Strategy-owned target ceiling. P4 implements target-inventory behavior.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyConfig {
+    pub max_target_notional: Notional,
 }
 
 /// Monotonic grid definition. P4 implements the sole target-inventory model.

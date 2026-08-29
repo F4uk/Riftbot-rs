@@ -23,14 +23,16 @@ pub enum ConfigError {
     /// A venue identifier appeared twice.
     #[error("duplicate venue ID: {0}")]
     DuplicateVenue(VenueId),
-    /// A configured fee or slippage assumption was negative.
+    /// A configured fee or execution-buffer assumption was negative.
     #[error("{field} must be non-negative")]
     NegativeBps { field: &'static str },
     /// An optional pair violated its two-venue shape.
     #[error("configured pair must contain two distinct enabled venues")]
     InvalidPairVenues,
-    /// A fair-value window cannot satisfy warmup.
-    #[error("fair-value minimum samples must be positive and no larger than the window")]
+    /// A fair-value logical-time schedule cannot satisfy warmup.
+    #[error(
+        "fair-value sampling durations must be positive and minimum samples must fit the window"
+    )]
     InvalidFairValueWindow,
     /// Grid levels were empty or non-monotonic.
     #[error(
@@ -40,6 +42,9 @@ pub enum ConfigError {
     /// A hard limit was zero or negative.
     #[error("{field} must be positive")]
     NonPositiveLimit { field: &'static str },
+    /// Strategy target capacity consumed the hard pair limit and left no risk headroom.
+    #[error("strategy.max_target_notional must be less than risk.max_pair_notional")]
+    InvalidStrategyRiskHeadroom,
     /// Execution safety limits were invalid.
     #[error("execution limits and expiry must be non-negative, with a non-zero expiry")]
     InvalidExecutionLimits,
@@ -51,7 +56,7 @@ pub enum ConfigError {
 impl AppConfig {
     /// Validates invariants that involve multiple typed fields.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.schema_version != 1 {
+        if self.schema_version != 2 {
             return Err(ConfigError::UnsupportedSchema(self.schema_version));
         }
 
@@ -88,9 +93,9 @@ impl AppConfig {
             return Err(ConfigError::InvalidPairVenues);
         }
 
-        if self.market_data.estimated_slippage_bps.value() < Decimal::ZERO {
+        if self.market_data.execution_buffer_bps.value() < Decimal::ZERO {
             return Err(ConfigError::NegativeBps {
-                field: "market_data.estimated_slippage_bps",
+                field: "market_data.execution_buffer_bps",
             });
         }
         if self.market_data.stale_after_ms.0 == 0 {
@@ -99,14 +104,24 @@ impl AppConfig {
             });
         }
 
-        if self.fair_value.minimum_samples == 0
-            || self.fair_value.minimum_samples > self.fair_value.window_samples
+        let sample_interval_ms = self.fair_value.sample_interval_ms.0;
+        let window_duration_ms = self.fair_value.window_duration_ms.0;
+        let minimum_samples = u64::try_from(self.fair_value.minimum_samples).unwrap_or(u64::MAX);
+        if sample_interval_ms == 0
+            || window_duration_ms == 0
+            || self.fair_value.max_sample_age_ms.0 == 0
+            || minimum_samples == 0
+            || minimum_samples > window_duration_ms / sample_interval_ms
         {
             return Err(ConfigError::InvalidFairValueWindow);
         }
 
         validate_grid(self)?;
         validate_positive_limits(self)?;
+
+        if self.strategy.max_target_notional.value() >= self.risk.max_pair_notional.value() {
+            return Err(ConfigError::InvalidStrategyRiskHeadroom);
+        }
 
         if self.execution.max_residual_delta.value() < Decimal::ZERO
             || self.execution.max_slippage_bps.value() < Decimal::ZERO
@@ -147,6 +162,10 @@ fn validate_positive_limits(config: &AppConfig) -> Result<(), ConfigError> {
         (
             "market_data.minimum_depth_notional",
             config.market_data.minimum_depth_notional.value(),
+        ),
+        (
+            "strategy.max_target_notional",
+            config.strategy.max_target_notional.value(),
         ),
         (
             "risk.max_venue_notional",

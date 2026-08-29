@@ -1,8 +1,10 @@
 # Nautilus Multi-Venue Perp Arbitrage
 ## 完整项目任务书 / Architecture · Scope · Coding Standard · Delivery Gates
 
-**文档状态：V2.0 架构冻结稿**  
-**文档用途：Codex 主执行规范 + GPT 大阶段审核依据 + 项目长期边界契约**  
+**文档状态：V2.1 Mathematical & State Semantics Freeze**
+
+**文档用途：Codex 主执行规范 + GPT 大阶段审核依据 + 项目长期边界契约**
+
 **开发模式：Codex 自主推进，小阶段自检修复；大阶段 GPT Gate 审核；用户只参与重大方向、密钥与实盘授权。**
 
 ---
@@ -64,6 +66,7 @@ QuantGuy **不负责最终仓位、不直接下单**。
 CJ 思路被抽象为：
 
 > `Deviation` 扩大 → TargetInventory 增加
+
 > `Deviation` 收缩 → TargetInventory 降低
 
 CJ 层只回答：
@@ -107,13 +110,14 @@ https://github.com/nautechsystems/nautilus_trader
 Production framework dependency
 ```
 
-**当前参考快照（2026-08-28）**
+**当前 authoritative production dependency pin**
 
 ```text
 e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c
 ```
 
-该 SHA 只作为本任务书生成时的“上游观察快照”。
+生产依赖 pin 的权威来源是 `UPSTREAM_SOURCES.md` 与 `Cargo.lock`；两者当前共同锁定上述 SHA。
+本任务书描述该契约，但不替代这两个可审计来源。
 
 ### Nautilus dependency pin 规则
 
@@ -124,6 +128,7 @@ e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c
   - 官方稳定 release/tag，或
   - 经验证的明确 commit SHA。
 - 选定后写入 `UPSTREAM_SOURCES.md` 和 lockfile。
+- `UPSTREAM_SOURCES.md` 与 `Cargo.lock` 不一致时必须 fail closed，不得猜测或自动跟随上游。
 - 后续不得自动跟随 upstream 更新。
 
 ---
@@ -530,6 +535,13 @@ Risk
 Execution
 ```
 
+P3 `OpportunityModel` 只打包和评估 measurement facts。它不：
+
+- 输出 `TargetInventory`；
+- 决定 position size；
+- 执行 V2 多 pair ranking；
+- 提交 order。
+
 ---
 
 ## 8.3 系统只有一个仓位大脑
@@ -617,28 +629,35 @@ Domain ExecutionIntent -> Nautilus Order
 
 V1 禁止使用 last price 产生 live order。
 
-以下术语与数学定义冻结：
+对显式 oriented route `long A / short B`，以下术语与数学定义冻结：
 
 ```text
 RawExecutablePremium
-= executable cross-venue premium from real L2 VWAP
+= (sell_vwap_B / buy_vwap_A - 1) * 10_000
 
 FairValueMidline
-= route-specific persistent/natural spread baseline
+= rolling robust median of valid synchronized ReferenceBasis(long A / short B) samples
 
 Deviation
 = RawExecutablePremium - FairValueMidline
 
 TradableEdge
-= DirectionAdjusted(Deviation)
+= Deviation
 - Fees
 - ExecutionUncertaintyBuffer
 + SignedFundingAdjustment
 - OtherExplicitRiskCosts
 ```
 
-`DirectionAdjusted(Deviation)` 表示将 route-specific `Deviation` 映射为候选增仓方向的经济收益符号。
-所有费用、buffer 与 funding 必须使用同一方向、同一 bps 分母和同一时间范围。
+`buy_vwap_A` 从 A 的真实 L2 asks 按指定数量逐层计算，`sell_vwap_B` 从 B 的真实 L2 bids
+按同一数量逐层计算。正 `Deviation` 表示 convergence economics 有利于**这一条显式 route**。
+
+反向必须作为独立 route `long B / short A` 计算，使用自己的 VWAP、`ReferenceBasis`、
+`FairValueMidline`、`Deviation` 与 `TradableEdge`。禁止通过对同一 snapshot 取负、通过
+模糊的 sign-remapping helper，或通过 `target_fraction` 符号来表达反向。
+
+`PairId` 只标识 pair/symbol；route orientation 只存在于 `long_venue` / `short_venue`。
+所有费用、buffer 与 funding 必须使用同一 oriented route、同一 bps 分母和同一经济 horizon。
 
 必须明确：
 
@@ -667,6 +686,25 @@ Funding：
 - funding unavailable 不得静默解释为 verified zero；必须保留 unavailable/unknown 状态并 fail closed；
 - 只有显式配置为 disabled 的 funding 才可按 operator policy 贡献零，且状态必须可见、可审计。
 
+Fee horizon：
+
+因为 `TradableEdge` 表示预期 convergence economics，增加风险 gate 使用的 `fee_bps` 必须是
+expected round-trip trading fees：
+
+```text
+fee_bps
+= entry two-leg fees
++ expected exit two-leg fees
+```
+
+禁止将 entry-only fees 称为 total trading cost。`ExecutionUncertaintyBuffer` 可以保守包含：
+
+- observed L2 之后的 latency；
+- adverse execution movement；
+- conservative expected exit microstructure/slippage。
+
+它不得重复 current observed depth impact；该 impact 已经包含在当前 executable VWAP 中。
+
 ---
 
 # 11. FairValue / Midline
@@ -676,17 +714,54 @@ V1 不做 AI。
 `FairValueMidline` 估计 route-specific persistent/natural spread baseline。它不是即时可交易利润，
 而是从 `RawExecutablePremium` 中移除的自然价差基线。
 
+对 oriented route `long A / short B`，canonical reference basis 冻结为：
+
+```text
+mid_A = (best_bid_A + best_ask_A) / 2
+mid_B = (best_bid_B + best_ask_B) / 2
+
+ReferenceBasis(long A / short B)
+= (mid_B / mid_A - 1) * 10_000
+
+FairValueMidline
+= rolling robust median of valid synchronized ReferenceBasis samples
+```
+
+mid price **只允许**用于 fair-value baseline estimation；它绝不能作为 executable trade price，
+也不能替代真实 L2 VWAP。`long B / short A` 有自己的独立 `ReferenceBasis` 与 sample window。
+
 优先实现：
 
 ```text
 Rolling Robust Median
 ```
 
+采样配置契约冻结为：
+
+```text
+fair_value.sample_interval_ms
+fair_value.window_duration_ms
+fair_value.minimum_samples
+fair_value.max_sample_age_ms
+```
+
+确定性采样规则：
+
+- sample ticks 由 injectable logical time 按 `sample_interval_ms` 的 Unix-epoch-aligned 固定时间网格
+  产生，即 logical milliseconds 满足 `tick_ms % sample_interval_ms == 0`；
+- live 使用 Nautilus clock，replay 使用 recorded/replay clock；
+- 每条 oriented route 每个 tick 最多接受一个 sample；
+- tick 只使用该时刻或之前最新的、valid、synchronized、healthy books；任一 book age 超过
+  `max_sample_age_ms` 时该 tick 无 sample；
+- 无效或缺失 tick 不 backfill、不合成 sample；
+- rolling window 按 `window_duration_ms` 的 logical time eviction；
+- book update 的原始频率不得成为 fair-value 权重，同一 logical input replay 必须产生相同 samples。
+
 并维护：
 
 - minimum sample count
 - warm-up
-- window
+- duration window
 - dispersion / volatility
 - invalid state
 
@@ -707,6 +782,9 @@ Rolling Robust Median
 ---
 
 # 12. RegimeFilter
+
+`Regime` 是 market/system classification，作为 `RiskManager` 的输入；它不是单笔授权，
+也不是 persistent/global kill switch。
 
 状态：
 
@@ -776,7 +854,7 @@ if spread > X:
 | 20 bps | 80% |
 | 25 bps | 100% |
 
-反向偏离按对称/配置规则处理。
+每个 oriented route 独立计算；反向使用 `long B / short A`，不得使用负 `target_fraction` 编码。
 
 ---
 
@@ -792,13 +870,14 @@ actual inventory
 required change
 ```
 
-例如：
+增加目标示例：
 
 ```text
-Target = -60%
-Actual = -40%
+direction = long Lighter / short Entropy
+target_fraction = 0.60
+effective_actual_fraction = 0.40
 
-Delta = -20%
+required increase = 0.20
 ```
 
 系统只增加 20%。
@@ -806,13 +885,57 @@ Delta = -20%
 价差收缩：
 
 ```text
-Target = -40%
-Actual = -60%
+direction = long Lighter / short Entropy
+target_fraction = 0.40
+effective_actual_fraction = 0.60
 
-Delta = +20%
+required reduction = 0.20
 ```
 
 系统自然减 20%。
+
+`target_fraction` 永远在 `[0, 1]`，方向只允许由以下 domain contract 表达：
+
+```text
+TargetDirection::Flat
+TargetDirection::LongShort { long_venue, short_venue }
+```
+
+`PairId` 不携带方向，禁止通过 `target_fraction` 的正负号编码 route orientation。
+
+---
+
+## 13.2 100% Target 与 Notional 语义
+
+配置必须包含：
+
+```text
+strategy.max_target_notional
+```
+
+Grid 100% 冻结为：
+
+```text
+target_fraction = 1.00
+target_notional = strategy.max_target_notional
+```
+
+它**不得**表示 `risk.max_pair_notional`。必须满足：
+
+```text
+strategy.max_target_notional < risk.max_pair_notional
+```
+
+以保留 execution、residual、reconciliation 与 emergency action 的 operational/risk headroom。
+
+V1 `target_notional` 表示 matched notional **PER LEG**。例如：
+
+```text
+target_notional = $500
+long leg = $500
+short leg = $500
+gross two-leg exposure = $1000
+```
 
 ---
 
@@ -831,6 +954,9 @@ AND RiskManager approves
 
 其中 `GridInventoryModel` 用 `Deviation` 计算 target；`Opportunity` / `Risk` 用 `TradableEdge`
 决定该 target 是否允许增加风险。两者职责不得合并或互相替代。
+
+只有 `IncreaseRisk` intent 要求 positive `TradableEdge`。`ReduceRisk`、`ResidualHedge` 与
+`EmergencyFlatten` 不得仅因 `TradableEdge <= 0` 被阻断。
 
 ---
 
@@ -913,6 +1039,15 @@ model_version
 decision_id
 ```
 
+约束：
+
+- `target_fraction` 必须非负且不超过 `1.00`；
+- `direction` 只能是 `TargetDirection::Flat` 或
+  `TargetDirection::LongShort { long_venue, short_venue }`；
+- `target_notional` 是 matched notional per leg，由
+  `target_fraction * strategy.max_target_notional` 得到；
+- `PairId` 不编码 route orientation。
+
 ---
 
 ## 15.4 `ExecutionIntent`
@@ -923,6 +1058,7 @@ decision_id
 intent_id
 decision_id
 symbol
+purpose
 target_net_delta
 max_residual_delta
 max_slippage_bps
@@ -931,6 +1067,9 @@ created_at
 expiry
 risk_context
 ```
+
+P6 将 `purpose` 冻结为 `IncreaseRisk`、`ReduceRisk`、`ResidualHedge` 或
+`EmergencyFlatten`；P3/P4 不提前实现 execution behavior。
 
 V1 强制：
 
@@ -986,6 +1125,13 @@ price_guard
 
 # 16. InventoryManager
 
+P4 拥有 `InventoryManager` 以及 `TargetInventory` 与 `EffectiveActual` 的比较语义。
+`EffectiveInventory` 必须包含会影响 pair exposure 的实际、reserved 与 pending exposure；
+不得只看已成交 position 后重复增加风险。
+
+`EffectiveActual` 是从 `EffectiveInventory` 投影到指定 oriented pair 的可比较 current exposure；
+它必须与 `TargetInventory` 使用相同的 direction 与 matched-notional-per-leg 单位。
+
 数据模型从第一天按 GlobalInventory 组织：
 
 ```text
@@ -1000,11 +1146,23 @@ V1 只使用 pair view。
 
 避免未来 V2 推翻结构。
 
+V1 每个 pair 最多允许一个 active risk-increasing intent，除非 reserved/pending exposure 已被
+完整纳入 `EffectiveInventory`，并在 target delta 与 Risk 计算中一致扣除。
+
 ---
 
 # 17. RiskManager
 
 Risk 权限高于 Strategy。
+
+状态所有权冻结：
+
+- `Regime`：market/system classification，是 Risk 的输入；
+- `RiskDecision`：一次 decision 的 authorization；
+- `KillState`：persistent/global、最高权限的运行状态；
+- effective permission：`Regime`、`RiskDecision`、`KillState` 与 intent purpose 中最严格者生效。
+
+低权限层不得覆盖高权限层；任何冲突均 fail closed。
 
 必须检查：
 
@@ -1038,6 +1196,8 @@ HALT_REQUIRED
 ---
 
 # 18. Kill State
+
+`KillState` 是 persistent/global highest-authority state，不是由单次 measurement 自动清除的状态。
 
 至少：
 
@@ -1074,7 +1234,7 @@ Freeze Decision Snapshot
       ↓
 Recheck Feed
       ↓
-Recheck TradableEdge
+If IncreaseRisk: Recheck TradableEdge
       ↓
 Risk Gate
       ↓
@@ -1090,6 +1250,18 @@ Reconcile
       ↓
 Finalize
 ```
+
+P6 `ExecutionIntent` 必须区分 purpose：
+
+```text
+IncreaseRisk
+ReduceRisk
+ResidualHedge
+EmergencyFlatten
+```
+
+只有 `IncreaseRisk` 需要 positive `TradableEdge`；其余 purpose 仍需适用的 Risk authorization，
+但不能被 entry economics 阻止必要的降险、残差对冲或紧急平仓。
 
 ---
 
@@ -1275,9 +1447,25 @@ V1 必须。
 - schema versioned。
 - 两次相同 replay 应产生相同 decision sequence。
 
+所有会影响 decision 的 timer、deadline、age、window、cooldown、timeout 与 expiry 必须使用
+injectable logical time：
+
+```text
+live   -> Nautilus clock
+replay -> recorded/replay clock
+```
+
+禁止在 domain/model decision path 内直接读取 wall clock；禁止用真实 `sleep()` 决定 replay 结果。
+
 ---
 
 # 26. PnL Attribution
+
+阶段所有权冻结：
+
+- P7：PnL attribution foundations，与 reconciliation/recovery 状态建立可审计基础；
+- P8：在 dry-run/shadow 中验证 PnL attribution 与 replay 一致性；
+- P9：作为 tiny-live acceptance 的真实成交 PnL 验收项。
 
 至少拆：
 
@@ -1482,6 +1670,9 @@ V1 默认：
 
 # 29. 配置规范
 
+V2.1 semantic freeze 对应 application config `schema_version = 2`。旧 schema 或旧字段必须显式
+拒绝，不得静默迁移为新经济含义。
+
 建议：
 
 ```text
@@ -1492,9 +1683,14 @@ config/live.toml
 
 - venue
 - symbol
-- fee assumptions
-- midline window
+- expected round-trip fee assumptions
+- `market_data.execution_buffer_bps`
+- `fair_value.sample_interval_ms`
+- `fair_value.window_duration_ms`
+- `fair_value.minimum_samples`
+- `fair_value.max_sample_age_ms`
 - grid
+- `strategy.max_target_notional`
 - max position
 - max global delta
 - slippage
@@ -1594,6 +1790,11 @@ Metrics 至少：
 - missing samples
 - regime shift
 - stale sample rejection
+- canonical `ReferenceBasis` for each oriented route
+- midpoint is baseline-only and never executable
+- deterministic interval sampling from logical time
+- raw book-update frequency does not weight the median
+- independent forward/reverse route windows
 
 ---
 
@@ -1603,8 +1804,11 @@ Metrics 至少：
 
 - expansion increases target
 - convergence reduces target
-- positive/negative direction
+- explicit forward/reverse `TargetDirection`
 - max position
+- non-negative target fraction
+- 100% maps to `strategy.max_target_notional`, not the Risk limit
+- matched notional per-leg semantics
 - zero deviation
 - measurement gate blocks added risk
 - measurement gate does not block necessary reduction
@@ -1900,6 +2104,11 @@ Codex 在 P0：
 - midline
 - warmup
 - extreme spread safety
+- oriented-route `ReferenceBasis` sampled deterministically from logical time
+- midpoint is baseline-only and never executable
+- forward/reverse routes are calculated independently
+- `fee_bps` covers expected round-trip fees
+- `OpportunityModel` remains measurement-only and emits no `TargetInventory`
 - frozen `RawExecutablePremium` / `FairValueMidline` / `Deviation` / `TradableEdge` terminology
 - L2 VWAP depth impact is not deducted twice
 - signed funding unavailable/unknown fails closed
@@ -1928,8 +2137,8 @@ tradable edge = 21 bps
 => economic gate may permit GridInventory to increase target
 ```
 
-以上示例假设 candidate direction 的 `DirectionAdjusted(Deviation)` 为正、
-`SignedFundingAdjustment = 0`，且 4 bps 已包含全部适用的 fee、execution buffer 与其他显式风险成本。
+以上示例针对一条显式 oriented route，假设 `SignedFundingAdjustment = 0`，且 4 bps 已包含
+expected round-trip fees、execution buffer 与其他全部适用的显式风险成本。
 
 ### GPT Gate 3
 
@@ -1947,13 +2156,18 @@ tradable edge = 21 bps
 目标：
 
 - GridInventoryModel
+- InventoryManager
 - target inventory
-- current/target delta
+- Target vs EffectiveActual delta
 
 验收：
 
-- spread expansion → target up
+- positive route Deviation expansion → target up
 - convergence → target down
+- target fraction remains non-negative; direction is explicit
+- 100% target uses `strategy.max_target_notional`
+- reserved/pending exposure is included in EffectiveInventory
+- at most one active risk-increasing intent per pair unless EffectiveInventory includes it
 - only one strategy brain
 - QuantGuy layer no inventory control
 - no orders emitted directly by Grid
@@ -1991,6 +2205,7 @@ tradable edge = 21 bps
 目标：
 
 - ExecutionIntent
+- explicit `IncreaseRisk` / `ReduceRisk` / `ResidualHedge` / `EmergencyFlatten` purpose
 - `legs[]`
 - V1 legs=2
 - explicit state machine
@@ -2008,6 +2223,7 @@ tradable edge = 21 bps
 - residual hedge
 - retry exhaustion
 - escalation
+- only `IncreaseRisk` requires positive `TradableEdge`
 
 ### GPT Gate 6
 
@@ -2023,6 +2239,7 @@ V1 最严格 Gate 之一。
 - live reconciliation
 - orphan intent recovery
 - restart recovery
+- PnL attribution foundations
 
 验收：
 
@@ -2046,6 +2263,7 @@ V1 最严格 Gate 之一。
 - live checklist
 - smallest position config
 - safety report
+- shadow PnL attribution validation
 
 要求连续运行一段约定时间。
 
@@ -2091,6 +2309,7 @@ NO-GO
 - replay 可解释
 - reconciliation 稳定
 - pnl attribution 合理
+- live PnL attribution passes acceptance
 - fault 自动转安全状态
 
 ### GPT Gate 9
@@ -2620,15 +2839,15 @@ Start by producing CURRENT_STATE.md and a P0-only execution plan.
 
 # 65. 当前冻结上游清单
 
-截至本任务书 V2.0：
+截至本任务书 V2.1：
 
 ```text
 NautilusTrader
 https://github.com/nautechsystems/nautilus_trader
-reference snapshot:
+authoritative production dependency pin:
 e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c
-dependency ref:
-TO BE SELECTED AND PINNED IN P0
+authoritative sources:
+UPSTREAM_SOURCES.md / Cargo.lock
 
 yourQuantGuy
 https://github.com/your-quantguy/entropy-arb
@@ -2676,4 +2895,4 @@ Backlog
 
 ---
 
-**END OF PROJECT TASKBOOK V2.0**
+**END OF PROJECT TASKBOOK V2.1**

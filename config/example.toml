@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 
 [runtime]
 mode = "signal_only"
@@ -27,11 +27,16 @@ instruments = ["io:SNDK-USD-PERP.HYPERLIQUID", "SNDK-PERP.LIGHTER"]
 [market_data]
 stale_after_ms = 1500
 minimum_depth_notional = "100.00"
-estimated_slippage_bps = "2.00"
+execution_buffer_bps = "2.00"
 
 [fair_value]
-window_samples = 3600
+sample_interval_ms = 1000
+window_duration_ms = 3600000
 minimum_samples = 300
+max_sample_age_ms = 1500
+
+[strategy]
+max_target_notional = "500.00"
 
 [[grid.levels]]
 deviation_bps = "5.00"

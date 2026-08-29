@@ -20,8 +20,9 @@ Report and the review flow defined by `PROJECT_TASKBOOK.md`.
 
 ### Pin and compatibility record
 
-- The commit was verified through the official repository and resolves exactly to the taskbook
-  snapshot.
+- This file and `Cargo.lock` are the authoritative production dependency pin. Both currently resolve
+  NautilusTrader to `e96a4ab8c8a5a7cae0ea6d37770d5ce2dee6db5c`; any mismatch fails closed.
+- The commit was verified through the official repository.
 - Workspace package version: 0.63.0; edition: Rust 2024; minimum Rust: 1.98.0.
 - The project directly compiles `nautilus-model` with `high-precision` enabled at the exact `rev`.
 - Optional P0 compatibility feature `nautilus-adapters` compiles official crates
