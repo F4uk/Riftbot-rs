@@ -1,6 +1,6 @@
 # P4 CJ Target Inventory Report
 
-Status: implemented on `codex/p4-grid-inventory`; stopped for GPT Gate 4
+Status: Gate 4 safety fixes implemented on `codex/p4-grid-inventory`; stopped before P5
 
 ## Green base and published implementation
 
@@ -31,6 +31,13 @@ constructor accepts the inclusive range `[0, 1]`, and serde deserialization is r
 same validation. A negative fraction cannot be constructed directly, parsed from configuration,
 or embedded in a deserialized `TargetInventory`.
 
+`TargetInventory` now also has a validated construction and deserialization boundary for its
+cross-field shape. A zero fraction is accepted only with zero notional and `Flat`; a positive
+fraction is accepted only with positive notional and `LongShort`; and the long and short venues
+must differ. Its fields are private, so neither direct construction nor serde can bypass those
+invariants. Validation against `strategy.max_target_notional` remains at the model/config boundary,
+where that configuration is available.
+
 Target direction remains exclusively:
 
 ```text
@@ -43,9 +50,13 @@ This invariant exists in the domain type and does not depend on `GridConfig::val
 
 ## GridInventoryModel
 
-`GridInventoryModel` is the sole target-sizing strategy. It accepts `Deviation` for one explicit
-`long venue A / short venue B` route and evaluates forward/reverse routes independently. It does
-not consume absolute spread or `TradableEdge`, and it cannot create an order.
+`GridInventoryModel` is the sole target-sizing strategy. In production it accepts an immutable
+`GridMeasurementInput` that can only be constructed from one P3 `OpportunityEvaluation`. That
+boundary verifies the P3 spread and opportunity views agree, computes checked two-leg measured
+notionals, and carries `Deviation` for one explicit `long venue A / short venue B` route.
+Forward/reverse routes remain independent. The grid uses only that snapshot's `Deviation` for
+sizing; it does not use absolute spread or `TradableEdge` as grid input, and it cannot create an
+order.
 
 V1 freezes a conservative floor-step rule: use the target at the greatest configured positive
 deviation boundary not exceeding the current deviation. Zero, negative, or below-first-boundary
@@ -101,9 +112,15 @@ For a direction reversal, the old route's entire effective exposure is proposed 
 first. The opposite target is reconsidered only after actual, reserved, and pending old-route
 exposure reaches zero. P4 never jumps through zero in one decision.
 
-## Measurement asymmetry and size awareness
+## Measurement snapshot binding, asymmetry, and size awareness
 
-An increase requires all P3 facts to match the target route and show:
+Every grid candidate preserves its source route, `observed_at`, P3 measurement-model version,
+measurement-config fingerprint, and source `deviation_bps`. An increase accepts economics and
+size evidence only from a `GridMeasurementInput` whose entire source identity matches the target.
+A stale or merely same-route measurement cannot authorize a newer grid target; timestamp, model,
+configuration, or deviation mismatch produces a distinct fail-closed reason.
+
+The matching P3 snapshot must also show:
 
 - `MeasurementValidity::Valid`;
 - positive `tradable_edge_bps`;
@@ -113,10 +130,19 @@ An increase requires all P3 facts to match the target route and show:
 This is P3 economic permission, not P5 hard-risk authorization. A missing, invalid, mismatched, or
 non-positive measurement returns `IncreaseBlocked` with an explicit reason and zero proposed size.
 
-A valid increase is capped at the smaller of the required target delta and P3's measured executable
-notional. Its proposal retains requested base quantity, measured notional, measurement timestamp,
-P3 model version, and configuration fingerprint. Thus an edge measured for a small clip cannot
-authorize an arbitrarily larger increase.
+For P3 requested base quantity `q`, P4 computes with checked fixed-decimal arithmetic:
+
+```text
+long_measured_notional  = executable_long_price  * q
+short_measured_notional = executable_short_price * q
+measured_matched_notional_cap = min(long_measured_notional, short_measured_notional)
+```
+
+A valid increase is capped at the smaller of the required target delta and that safe matched
+notional **per-leg** cap. Its proposal retains requested base quantity, both leg notionals, the safe
+cap, measurement timestamp, P3 model version, and configuration fingerprint. This remains safe
+whether the sell price is above or below the buy price: the proposed matched notional cannot imply
+more base quantity on either leg than P3 measured.
 
 Reductions never require a favorable entry edge. Bad, missing, or non-positive entry economics do
 not block convergence-driven reduction. A reversal uses valid opposite economics to select the
@@ -125,9 +151,9 @@ basis.
 
 ## Tests and verification
 
-`cargo test --locked --all-targets --all-features` passed 92 tests and failed 0: 75 library tests,
-11 P2 integration tests, and 6 P3 replay integration tests. P4 adds 18 focused domain/config/grid/manager
-tests, with one replacing the earlier signed-fraction test.
+`cargo test --locked --all-targets --all-features` passed 102 tests and failed 0: 85 library tests,
+11 P2 integration tests, and 6 P3 replay integration tests. P4 now has 28 focused
+domain/config/grid/manager tests, with one replacing the earlier signed-fraction test.
 
 P4 coverage includes:
 
@@ -142,14 +168,17 @@ P4 coverage includes:
 - non-positive edge blocking only increase, while bad edge cannot block reduction;
 - opposing increase ambiguity and opposing effective-exposure fail-closed behavior;
 - two-step reversal; and
-- measured-size capping plus preservation of its exact evidence fields.
+- exact P3 snapshot binding, including stale timestamp, fingerprint, and model-version rejection;
+- matching-snapshot acceptance; and
+- checked two-leg measured-size capping for both price orderings plus preservation of its exact
+  evidence fields.
 
 | Command | Result |
 |---|---|
 | `python scripts/ci_policy.py all` | pass |
 | `cargo fmt --check` | pass |
 | `cargo clippy --locked --all-targets --all-features -- -D warnings` | pass |
-| `cargo test --locked --all-targets --all-features` | 92 passed; 0 failed |
+| `cargo test --locked --all-targets --all-features` | 102 passed; 0 failed |
 | `cargo check --locked --features nautilus-adapters` | pass |
 
 ## Scope audit and limitations

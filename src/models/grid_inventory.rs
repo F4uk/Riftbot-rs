@@ -8,10 +8,13 @@ use crate::{
     config::{GridConfig, GridLevelConfig, StrategyConfig},
     domain::{
         ids::{DecisionId, IdentifierError, ModelVersion, PairId, Symbol, VenueId},
-        inventory::{TargetDirection, TargetInventory},
-        numeric::{Bps, Notional, NumericError, TargetFraction},
+        inventory::{
+            InventoryDomainError, TargetDirection, TargetInventory, TargetInventoryParams,
+        },
+        numeric::{BaseQty, Bps, Notional, NumericError, Price, TargetFraction, UnixNanos},
+        spread::MeasurementValidity,
     },
-    models::P4_MODEL_VERSION,
+    models::{P4_MODEL_VERSION, opportunity::OpportunityEvaluation},
 };
 
 /// Frozen V1 behavior between configured deviation boundaries.
@@ -22,36 +25,329 @@ pub enum BetweenGridRule {
     FloorStep,
 }
 
-/// One independently oriented input. `PairId` itself carries no direction.
-#[derive(Clone, Copy, Debug)]
-pub struct GridRouteInput<'a> {
-    pub pair_id: &'a PairId,
-    pub symbol: &'a Symbol,
-    pub long_venue: &'a VenueId,
-    pub short_venue: &'a VenueId,
-    pub deviation_bps: Bps,
-    pub decision_id: &'a DecisionId,
+/// Immutable P4 view of one P3 `OpportunityEvaluation` snapshot.
+///
+/// Production callers can only construct this through `TryFrom<&OpportunityEvaluation>`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GridMeasurementInput {
+    pair_id: PairId,
+    symbol: Symbol,
+    long_venue: VenueId,
+    short_venue: VenueId,
+    source_deviation_bps: Bps,
+    source_observed_at: UnixNanos,
+    source_measurement_model_version: ModelVersion,
+    source_measurement_config_fingerprint: String,
+    requested_base_quantity: BaseQty,
+    executable_long_price: Price,
+    executable_short_price: Price,
+    long_measured_notional: Notional,
+    short_measured_notional: Notional,
+    measured_matched_notional_cap: Notional,
+    validity: MeasurementValidity,
+    tradable_edge_bps: Option<Bps>,
+    increase_risk_economically_allowed: bool,
+}
+
+impl GridMeasurementInput {
+    #[must_use]
+    pub fn pair_id(&self) -> &PairId {
+        &self.pair_id
+    }
+
+    #[must_use]
+    pub fn symbol(&self) -> &Symbol {
+        &self.symbol
+    }
+
+    #[must_use]
+    pub fn long_venue(&self) -> &VenueId {
+        &self.long_venue
+    }
+
+    #[must_use]
+    pub fn short_venue(&self) -> &VenueId {
+        &self.short_venue
+    }
+
+    #[must_use]
+    pub const fn source_deviation_bps(&self) -> Bps {
+        self.source_deviation_bps
+    }
+
+    #[must_use]
+    pub const fn source_observed_at(&self) -> UnixNanos {
+        self.source_observed_at
+    }
+
+    #[must_use]
+    pub fn source_measurement_model_version(&self) -> &ModelVersion {
+        &self.source_measurement_model_version
+    }
+
+    #[must_use]
+    pub fn source_measurement_config_fingerprint(&self) -> &str {
+        &self.source_measurement_config_fingerprint
+    }
+
+    #[must_use]
+    pub const fn requested_base_quantity(&self) -> BaseQty {
+        self.requested_base_quantity
+    }
+
+    #[must_use]
+    pub const fn executable_long_price(&self) -> Price {
+        self.executable_long_price
+    }
+
+    #[must_use]
+    pub const fn executable_short_price(&self) -> Price {
+        self.executable_short_price
+    }
+
+    #[must_use]
+    pub const fn long_measured_notional(&self) -> Notional {
+        self.long_measured_notional
+    }
+
+    #[must_use]
+    pub const fn short_measured_notional(&self) -> Notional {
+        self.short_measured_notional
+    }
+
+    #[must_use]
+    pub const fn measured_matched_notional_cap(&self) -> Notional {
+        self.measured_matched_notional_cap
+    }
+
+    #[must_use]
+    pub const fn validity(&self) -> MeasurementValidity {
+        self.validity
+    }
+
+    #[must_use]
+    pub const fn tradable_edge_bps(&self) -> Option<Bps> {
+        self.tradable_edge_bps
+    }
+
+    #[must_use]
+    pub const fn increase_risk_economically_allowed(&self) -> bool {
+        self.increase_risk_economically_allowed
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn for_test(
+        pair_id: PairId,
+        symbol: Symbol,
+        long_venue: VenueId,
+        short_venue: VenueId,
+        deviation_bps: Bps,
+        observed_at: UnixNanos,
+        measurement_model_version: ModelVersion,
+        config_fingerprint: String,
+        requested_base_quantity: BaseQty,
+        executable_long_price: Price,
+        executable_short_price: Price,
+        validity: MeasurementValidity,
+        tradable_edge_bps: Option<Bps>,
+        increase_risk_economically_allowed: bool,
+    ) -> Result<Self, GridInventoryError> {
+        build_measurement_input(
+            pair_id,
+            symbol,
+            long_venue,
+            short_venue,
+            deviation_bps,
+            observed_at,
+            measurement_model_version,
+            config_fingerprint,
+            requested_base_quantity,
+            executable_long_price,
+            executable_short_price,
+            validity,
+            tradable_edge_bps,
+            increase_risk_economically_allowed,
+        )
+    }
+}
+
+impl TryFrom<&OpportunityEvaluation> for GridMeasurementInput {
+    type Error = GridInventoryError;
+
+    fn try_from(evaluation: &OpportunityEvaluation) -> Result<Self, Self::Error> {
+        let spread = &evaluation.spread;
+        let opportunity = &evaluation.opportunity;
+        if spread.pair_id != opportunity.pair_id
+            || spread.symbol != opportunity.symbol
+            || spread.long_venue != opportunity.long_venue
+            || spread.short_venue != opportunity.short_venue
+            || spread.executable_long_price != opportunity.executable_long_price
+            || spread.executable_short_price != opportunity.executable_short_price
+            || spread.executable_notional != opportunity.executable_notional
+            || spread.deviation_bps != opportunity.deviation_bps
+            || spread.tradable_edge_bps != opportunity.tradable_edge_bps
+            || spread.validity != opportunity.validity
+            || spread.timestamp != opportunity.timestamp
+            || spread.model_version != opportunity.model_version
+            || spread.config_fingerprint != opportunity.config_fingerprint
+        {
+            return Err(GridInventoryError::InconsistentMeasurementSnapshot);
+        }
+        let deviation_bps = opportunity
+            .deviation_bps
+            .ok_or(GridInventoryError::MissingDeviation)?;
+        let input = build_measurement_input(
+            opportunity.pair_id.clone(),
+            opportunity.symbol.clone(),
+            opportunity.long_venue.clone(),
+            opportunity.short_venue.clone(),
+            deviation_bps,
+            opportunity.timestamp,
+            opportunity.model_version.clone(),
+            opportunity.config_fingerprint.clone(),
+            spread.requested_base_quantity,
+            opportunity.executable_long_price,
+            opportunity.executable_short_price,
+            opportunity.validity,
+            opportunity.tradable_edge_bps,
+            opportunity.increase_risk_economically_allowed,
+        )?;
+        if input.long_measured_notional != opportunity.executable_notional {
+            return Err(GridInventoryError::InconsistentMeasurementSnapshot);
+        }
+        Ok(input)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_measurement_input(
+    pair_id: PairId,
+    symbol: Symbol,
+    long_venue: VenueId,
+    short_venue: VenueId,
+    source_deviation_bps: Bps,
+    source_observed_at: UnixNanos,
+    source_measurement_model_version: ModelVersion,
+    source_measurement_config_fingerprint: String,
+    requested_base_quantity: BaseQty,
+    executable_long_price: Price,
+    executable_short_price: Price,
+    validity: MeasurementValidity,
+    tradable_edge_bps: Option<Bps>,
+    increase_risk_economically_allowed: bool,
+) -> Result<GridMeasurementInput, GridInventoryError> {
+    if long_venue == short_venue || source_measurement_config_fingerprint.is_empty() {
+        return Err(GridInventoryError::InconsistentMeasurementSnapshot);
+    }
+    let long_value = executable_long_price
+        .value()
+        .checked_mul(requested_base_quantity.value())
+        .ok_or(GridInventoryError::Arithmetic)?;
+    let short_value = executable_short_price
+        .value()
+        .checked_mul(requested_base_quantity.value())
+        .ok_or(GridInventoryError::Arithmetic)?;
+    let long_measured_notional = Notional::new(long_value)?;
+    let short_measured_notional = Notional::new(short_value)?;
+    let measured_matched_notional_cap = Notional::new(long_value.min(short_value))?;
+    Ok(GridMeasurementInput {
+        pair_id,
+        symbol,
+        long_venue,
+        short_venue,
+        source_deviation_bps,
+        source_observed_at,
+        source_measurement_model_version,
+        source_measurement_config_fingerprint,
+        requested_base_quantity,
+        executable_long_price,
+        executable_short_price,
+        long_measured_notional,
+        short_measured_notional,
+        measured_matched_notional_cap,
+        validity,
+        tradable_edge_bps,
+        increase_risk_economically_allowed,
+    })
 }
 
 /// Auditable grid output before pair-level arbitration or inventory comparison.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct GridRouteTarget {
-    pub pair_id: PairId,
-    pub symbol: Symbol,
-    pub long_venue: VenueId,
-    pub short_venue: VenueId,
-    pub deviation_bps: Bps,
-    pub applied_boundary_bps: Option<Bps>,
-    pub between_grid_rule: BetweenGridRule,
-    pub target_fraction: TargetFraction,
-    pub target_notional_per_leg: Notional,
-    pub reason: String,
-    pub model_version: ModelVersion,
-    pub decision_id: DecisionId,
+    pair_id: PairId,
+    symbol: Symbol,
+    long_venue: VenueId,
+    short_venue: VenueId,
+    source_observed_at: UnixNanos,
+    source_measurement_model_version: ModelVersion,
+    source_measurement_config_fingerprint: String,
+    source_deviation_bps: Bps,
+    applied_boundary_bps: Option<Bps>,
+    between_grid_rule: BetweenGridRule,
+    target_fraction: TargetFraction,
+    target_notional_per_leg: Notional,
+    reason: String,
+    model_version: ModelVersion,
+    decision_id: DecisionId,
 }
 
 impl GridRouteTarget {
+    #[must_use]
+    pub fn pair_id(&self) -> &PairId {
+        &self.pair_id
+    }
+
+    #[must_use]
+    pub fn symbol(&self) -> &Symbol {
+        &self.symbol
+    }
+
+    #[must_use]
+    pub fn long_venue(&self) -> &VenueId {
+        &self.long_venue
+    }
+
+    #[must_use]
+    pub fn short_venue(&self) -> &VenueId {
+        &self.short_venue
+    }
+
+    #[must_use]
+    pub const fn source_observed_at(&self) -> UnixNanos {
+        self.source_observed_at
+    }
+
+    #[must_use]
+    pub fn source_measurement_model_version(&self) -> &ModelVersion {
+        &self.source_measurement_model_version
+    }
+
+    #[must_use]
+    pub fn source_measurement_config_fingerprint(&self) -> &str {
+        &self.source_measurement_config_fingerprint
+    }
+
+    #[must_use]
+    pub const fn source_deviation_bps(&self) -> Bps {
+        self.source_deviation_bps
+    }
+
+    #[must_use]
+    pub const fn applied_boundary_bps(&self) -> Option<Bps> {
+        self.applied_boundary_bps
+    }
+
+    #[must_use]
+    pub const fn between_grid_rule(&self) -> BetweenGridRule {
+        self.between_grid_rule
+    }
+
+    #[must_use]
+    pub fn decision_id(&self) -> &DecisionId {
+        &self.decision_id
+    }
+
     #[must_use]
     pub fn target_fraction(&self) -> TargetFraction {
         self.target_fraction
@@ -80,8 +376,8 @@ impl GridRouteTarget {
     }
 
     /// Materializes the sole external target only after pair-level arbitration.
-    pub(crate) fn to_target_inventory(&self) -> TargetInventory {
-        TargetInventory {
+    pub(crate) fn to_target_inventory(&self) -> Result<TargetInventory, InventoryDomainError> {
+        TargetInventory::new(TargetInventoryParams {
             symbol: self.symbol.clone(),
             pair_id: self.pair_id.clone(),
             target_fraction: self.target_fraction,
@@ -90,7 +386,7 @@ impl GridRouteTarget {
             reason: self.reason.clone(),
             model_version: self.model_version.clone(),
             decision_id: self.decision_id.clone(),
-        }
+        })
     }
 }
 
@@ -98,6 +394,10 @@ impl GridRouteTarget {
 pub enum GridInventoryError {
     #[error("grid configuration must be positive and strictly monotonic")]
     InvalidConfiguration,
+    #[error("P3 opportunity evaluation contains inconsistent snapshot fields")]
+    InconsistentMeasurementSnapshot,
+    #[error("P3 opportunity evaluation does not contain a deviation")]
+    MissingDeviation,
     #[error("an oriented route must use distinct venues")]
     SameVenue,
     #[error("fixed-decimal grid arithmetic failed")]
@@ -139,10 +439,11 @@ impl GridInventoryModel {
         })
     }
 
-    /// Maps one explicit route's deviation to a non-negative floor-step target.
+    /// Maps one immutable P3 measurement snapshot to a non-negative floor-step target.
     pub fn evaluate(
         &self,
-        input: GridRouteInput<'_>,
+        input: &GridMeasurementInput,
+        decision_id: &DecisionId,
     ) -> Result<GridRouteTarget, GridInventoryError> {
         if input.long_venue == input.short_venue {
             return Err(GridInventoryError::SameVenue);
@@ -150,7 +451,7 @@ impl GridInventoryModel {
         let applied = self
             .levels
             .iter()
-            .take_while(|level| input.deviation_bps.value() >= level.deviation_bps.value())
+            .take_while(|level| input.source_deviation_bps.value() >= level.deviation_bps.value())
             .last();
         let target_fraction = applied.map_or_else(
             || TargetFraction::new(Decimal::ZERO),
@@ -171,14 +472,19 @@ impl GridInventoryModel {
             symbol: input.symbol.clone(),
             long_venue: input.long_venue.clone(),
             short_venue: input.short_venue.clone(),
-            deviation_bps: input.deviation_bps,
+            source_observed_at: input.source_observed_at,
+            source_measurement_model_version: input.source_measurement_model_version.clone(),
+            source_measurement_config_fingerprint: input
+                .source_measurement_config_fingerprint
+                .clone(),
+            source_deviation_bps: input.source_deviation_bps,
             applied_boundary_bps: applied.map(|level| level.deviation_bps),
             between_grid_rule: BetweenGridRule::FloorStep,
             target_fraction,
             target_notional_per_leg: target_notional,
             reason,
             model_version: self.model_version.clone(),
-            decision_id: input.decision_id.clone(),
+            decision_id: decision_id.clone(),
         })
     }
 }
@@ -189,13 +495,14 @@ mod tests {
 
     use rust_decimal::Decimal;
 
-    use super::{BetweenGridRule, GridInventoryModel, GridRouteInput};
+    use super::{BetweenGridRule, GridInventoryModel, GridMeasurementInput};
     use crate::{
         config::parse_toml,
         domain::{
-            ids::{DecisionId, PairId, Symbol, VenueId},
+            ids::{DecisionId, ModelVersion, PairId, Symbol, VenueId},
             inventory::TargetDirection,
-            numeric::Bps,
+            numeric::{BaseQty, Bps, Price, UnixNanos},
+            spread::MeasurementValidity,
         },
     };
 
@@ -231,14 +538,23 @@ mod tests {
         } else {
             (&fixture.entropy, &fixture.lighter)
         };
-        let output = model.evaluate(GridRouteInput {
-            pair_id: &fixture.pair_id,
-            symbol: &fixture.symbol,
-            long_venue,
-            short_venue,
-            deviation_bps: Bps::new(deviation),
-            decision_id: &fixture.decision_id,
-        })?;
+        let measurement = GridMeasurementInput::for_test(
+            fixture.pair_id.clone(),
+            fixture.symbol.clone(),
+            long_venue.clone(),
+            short_venue.clone(),
+            Bps::new(deviation),
+            UnixNanos(100_000_000_000),
+            ModelVersion::try_from("p3-measurement-v1")?,
+            "measurement-config-sha256".to_owned(),
+            BaseQty::new(Decimal::new(10, 2))?,
+            Price::new(Decimal::new(100, 0))?,
+            Price::new(Decimal::new(101, 0))?,
+            MeasurementValidity::Valid,
+            Some(Bps::new(Decimal::new(10, 0))),
+            true,
+        )?;
+        let output = model.evaluate(&measurement, &fixture.decision_id)?;
         Ok((config, output))
     }
 
@@ -259,7 +575,10 @@ mod tests {
             let (_, output) = target(Decimal::new(deviation, 0), false)?;
             assert_eq!(output.target_fraction().value(), Decimal::new(fraction, 2));
             assert_eq!(
-                output.applied_boundary_bps.expect("grid boundary").value(),
+                output
+                    .applied_boundary_bps()
+                    .expect("grid boundary")
+                    .value(),
                 Decimal::new(deviation, 0)
             );
         }
@@ -270,7 +589,7 @@ mod tests {
     fn between_boundaries_uses_conservative_floor_step() -> Result<(), Box<dyn Error>> {
         let (_, output) = target(Decimal::new(1499, 2), false)?;
         assert_eq!(output.target_fraction().value(), Decimal::new(40, 2));
-        assert_eq!(output.between_grid_rule, BetweenGridRule::FloorStep);
+        assert_eq!(output.between_grid_rule(), BetweenGridRule::FloorStep);
         Ok(())
     }
 

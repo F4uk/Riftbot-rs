@@ -1,6 +1,6 @@
-# GPT Gate 4 Review Package
+# GPT Gate 4 Safety-Fix Review Package
 
-Decision requested: review P4 CJ Target Inventory only.
+Decision requested: verify the Gate 4 safety fixes only; P5 remains out of scope.
 
 ## Review inputs
 
@@ -13,15 +13,19 @@ Decision requested: review P4 CJ Target Inventory only.
 - Pair arbitration and target delta: `src/strategy/inventory_manager.rs`
 - Complete P4 implementation commit: `ba5d968194ef956efe99b7bcd636356cde75329a`
 - Final code/test commit: `6be5b62b0c6be10dd55dd056db1e10c63f7fcdc3`
+- Gate 4 fix commit: the commit containing this review package; final SHA is reported after push
 - Hosted CI:
   [run 33263554823](https://github.com/F4uk/Riftbot-rs/actions/runs/33263554823), conclusion
   `SUCCESS`
-- Tests: 92 passed, 0 failed
+- Hosted CI for the fix commit: required before final handoff and reported with the final SHA
+- Tests: 102 passed, 0 failed
 
 ## Gate checklist
 
 - [x] `TargetFraction` accepts only `[0, 1]` at construction and deserialization boundaries.
 - [x] Negative target fractions cannot be introduced through config or `TargetInventory` serde.
+- [x] `TargetInventory` construction and serde enforce zero/flat, positive/directional, positive
+  notional, and distinct-venue cross-field invariants.
 - [x] Direction is `Flat` or explicit `LongShort`; no signed fraction or `PairId` encodes it.
 - [x] Grid consumes oriented-route `Deviation`, not absolute spread or `TradableEdge`.
 - [x] Zero and every boundary are exact; between boundaries use the documented floor-step rule.
@@ -36,19 +40,25 @@ Decision requested: review P4 CJ Target Inventory only.
 - [x] Bad entry economics cannot block necessary reduction.
 - [x] Reversal flattens the old route before any opposite increase.
 - [x] Increase size is capped by and retains the exact P3 measured size/notional evidence.
+- [x] Grid `Deviation` and increase economics/size come from one immutable P3 measurement view.
+- [x] Route, observed timestamp, P3 model version, config fingerprint, and source deviation must
+  match before any increase; mismatches fail closed explicitly.
+- [x] Matched notional authorization is the smaller of checked long-price and short-price notionals
+  at the exact P3 requested base quantity.
+- [x] The proposal preserves requested quantity, both measured leg notionals, safe matched cap,
+  timestamp, model version, and fingerprint.
 - [x] Outputs are proposals, not `RiskDecision`, `ExecutionIntent`, basket, or order commands.
-- [x] Repository policy, formatting, locked Clippy, 92 tests, pinned adapter compilation, and
+- [x] Repository policy, formatting, locked Clippy, 102 tests, pinned adapter compilation, and
   hosted CI are green.
 - [x] No P3 math, P5 behavior, venue execution, Nautilus core, or copied CJ source changed.
 
 ## Reviewer focus
 
-1. Attempt negative construction and serde bypass of `TargetFraction` / `TargetInventory`.
-2. Recompute all floor-step boundaries and the strategy-cap per-leg target notionals.
-3. Confirm only the pair arbiter can emit one final target and ambiguity emits none.
-4. Confirm EffectiveActual includes reserved and pending exposure before proposing an increase.
-5. Confirm increase economics/size checks cannot block reductions or authorize a larger clip.
-6. Confirm reversal is a reduction-only first step.
-7. Confirm there is no RiskManager, execution, or order path in P4.
+1. Attempt impossible cross-field construction and serde bypass of `TargetInventory`.
+2. Try to authorize a target with stale or mismatched P3 snapshot identity.
+3. Recompute both leg notionals at requested `q` and confirm the proposal uses their minimum.
+4. Confirm increase economics/size checks cannot block reductions or authorize a larger clip.
+5. Confirm no `RiskManager`, `RiskDecision`, `ExecutionIntent`, lifecycle, execution, or P5 path
+   was added.
 
 No P5 work is authorized by this package.
