@@ -1,8 +1,8 @@
 # Current State and Gap Analysis
 
-Status date: 2026-08-28
+Status date: 2026-08-29
 
-Governing contract: `PROJECT_TASKBOOK.md` V2.0
+Governing contract: `PROJECT_TASKBOOK.md` V2.1 Mathematical & State Semantics Freeze
 
 ## Repository baseline before P0
 
@@ -139,3 +139,31 @@ Replay is implemented on `codex/p2-recorder-replay` for Gate 2 review. The repos
 | P3-P9 | Not started | No later-stage behavior added |
 
 The next allowed action is GPT Gate 2 review. P3 must not begin unless Gate 2 permits it.
+
+## Post-P3 status
+
+GPT Gate 2 passed. P3 Measurement is implemented on `codex/p3-measurement` for Gate 3 review. The
+repository now also has:
+
+- Independent forward and reverse executable routes calculated from real L2 VWAP.
+- Deterministic route-specific midpoint `ReferenceBasis` sampling, rolling robust midline,
+  dispersion, warm-up, and logical-time eviction.
+- Measurement-only regime classification and cost-adjusted opportunity evaluation using
+  `Deviation`, expected round-trip fees, explicit execution uncertainty, signed funding, and named
+  risk costs.
+- Explicit fail-closed handling for unhealthy/stale/skewed books, insufficient depth, missing fees,
+  and unavailable funding.
+- Offline deterministic P3 replay bound to the P2 recording checksum, P3 model version, and
+  measurement configuration fingerprint, with no execution capability.
+- Fresh official-adapter SNDK recording/reconnect evidence and a machine-readable two-route
+  measurement report.
+
+| Stage | Current status | Evidence |
+|---|---|---|
+| P0 Foundation | Gate 0 passed | `docs/stages/P0_REPORT.md` |
+| P1 Connectivity | Gate 1 passed; merged to `main` | `docs/stages/P1_REPORT.md` |
+| P2 Recorder & Replay | Gate 2 passed | `docs/stages/P2_REPORT.md` |
+| P3 Measurement | Implemented; Gate 3 pending | `docs/stages/P3_REPORT.md`, `docs/gates/GATE_3_REVIEW.md`, `docs/evidence/P3_MEASUREMENT.json` |
+| P4-P9 | Not started | No later-stage behavior added |
+
+The next allowed action is GPT Gate 3 review. P4 must not begin unless Gate 3 permits it.

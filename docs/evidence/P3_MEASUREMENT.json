@@ -1,0 +1,950 @@
+{
+  "source_recording_schema_version": 1,
+  "source_content_sha256": "03b1438fb8a186979b8ee9bc4ccb25009673b22fce41a97034f6a6347fc8fa6a",
+  "source_replay_end_ts": 1788017157655026500,
+  "safety": "offline_measurement_only",
+  "model_version": "p3-measurement-v1",
+  "config_fingerprint": "b1ba6ffb4f7f08e71dacd5511a97148b011313717e850201eb59e94aff69834e",
+  "sample_interval_ms": 1000,
+  "routes": [
+    {
+      "pair_id": "sndk_entropy_lighter",
+      "long_venue": "entropy",
+      "short_venue": "lighter"
+    },
+    {
+      "pair_id": "sndk_entropy_lighter",
+      "long_venue": "lighter",
+      "short_venue": "entropy"
+    }
+  ],
+  "ticks": [
+    {
+      "tick_ts": 1788017144000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": null,
+        "validity": "venue_unhealthy",
+        "reason": "long_book_missing"
+      }
+    },
+    {
+      "tick_ts": 1788017144000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": null,
+        "validity": "venue_unhealthy",
+        "reason": "long_book_missing"
+      }
+    },
+    {
+      "tick_ts": 1788017145000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": null,
+        "validity": "venue_unhealthy",
+        "reason": "long_book_missing"
+      }
+    },
+    {
+      "tick_ts": 1788017145000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": null,
+        "validity": "venue_unhealthy",
+        "reason": "long_book_missing"
+      }
+    },
+    {
+      "tick_ts": 1788017146000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": null,
+        "validity": "venue_unhealthy",
+        "reason": "long_book_missing"
+      }
+    },
+    {
+      "tick_ts": 1788017146000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": null,
+        "validity": "venue_unhealthy",
+        "reason": "long_book_missing"
+      }
+    },
+    {
+      "tick_ts": 1788017147000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": null,
+        "validity": "venue_unhealthy",
+        "reason": "long_book_missing"
+      }
+    },
+    {
+      "tick_ts": 1788017147000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": null,
+        "validity": "venue_unhealthy",
+        "reason": "long_book_missing"
+      }
+    },
+    {
+      "tick_ts": 1788017148000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "evaluated",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "entropy",
+            "short_venue": "lighter"
+          },
+          "tick_ts": 1788017148000000000,
+          "reference_basis_bps": "3.1951030841152927723404970000",
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": null
+        },
+        "evaluation": {
+          "spread": {
+            "pair_id": "sndk_entropy_lighter",
+            "symbol": "SNDK",
+            "long_venue": "entropy",
+            "short_venue": "lighter",
+            "long_instrument_id": "io:SNDK-USD-PERP.HYPERLIQUID",
+            "short_instrument_id": "SNDK-PERP.LIGHTER",
+            "requested_base_quantity": "0.10",
+            "maximum_executable_base_quantity": "8.6824",
+            "executable_long_price": "1486.70",
+            "executable_short_price": "1487.12",
+            "executable_notional": "148.6700",
+            "raw_executable_premium_bps": "2.8250487657227416425640680000",
+            "midline_bps": null,
+            "deviation_bps": null,
+            "fee_bps": null,
+            "depth_impact_bps": "0",
+            "execution_buffer_bps": "2.00",
+            "funding_state": "unavailable",
+            "funding_adjustment_bps": null,
+            "other_explicit_risk_costs_bps": [],
+            "tradable_edge_bps": null,
+            "fair_value_sample_count": 1,
+            "fair_value_dispersion_bps": null,
+            "long_age_ms": 925,
+            "short_age_ms": 787,
+            "receive_skew_ms": 137,
+            "timestamp": 1788017148000000000,
+            "validity": "warming_up",
+            "rejection_reason": "warming_up",
+            "model_version": "p3-measurement-v1",
+            "config_fingerprint": "b1ba6ffb4f7f08e71dacd5511a97148b011313717e850201eb59e94aff69834e"
+          },
+          "opportunity": {
+            "pair_id": "sndk_entropy_lighter",
+            "symbol": "SNDK",
+            "long_venue": "entropy",
+            "short_venue": "lighter",
+            "executable_long_price": "1486.70",
+            "executable_short_price": "1487.12",
+            "executable_notional": "148.6700",
+            "raw_executable_premium_bps": "2.8250487657227416425640680000",
+            "midline_bps": null,
+            "deviation_bps": null,
+            "fee_bps": null,
+            "depth_impact_bps": "0",
+            "execution_buffer_bps": "2.00",
+            "funding_state": "unavailable",
+            "funding_adjustment_bps": null,
+            "other_explicit_risk_costs_bps": [],
+            "tradable_edge_bps": null,
+            "regime": "reduce_only",
+            "validity": "warming_up",
+            "rejection_reason": "warming_up",
+            "increase_risk_economically_allowed": false,
+            "timestamp": 1788017148000000000,
+            "model_version": "p3-measurement-v1",
+            "config_fingerprint": "b1ba6ffb4f7f08e71dacd5511a97148b011313717e850201eb59e94aff69834e"
+          }
+        }
+      }
+    },
+    {
+      "tick_ts": 1788017148000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "evaluated",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "lighter",
+            "short_venue": "entropy"
+          },
+          "tick_ts": 1788017148000000000,
+          "reference_basis_bps": "-3.194082541817264856686560000",
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": null
+        },
+        "evaluation": {
+          "spread": {
+            "pair_id": "sndk_entropy_lighter",
+            "symbol": "SNDK",
+            "long_venue": "lighter",
+            "short_venue": "entropy",
+            "long_instrument_id": "SNDK-PERP.LIGHTER",
+            "short_instrument_id": "io:SNDK-USD-PERP.HYPERLIQUID",
+            "requested_base_quantity": "0.10",
+            "maximum_executable_base_quantity": "22.2987",
+            "executable_long_price": "1487.13",
+            "executable_short_price": "1486.60",
+            "executable_notional": "148.7130",
+            "raw_executable_premium_bps": "-3.5639116956822873588724590000",
+            "midline_bps": null,
+            "deviation_bps": null,
+            "fee_bps": null,
+            "depth_impact_bps": "0",
+            "execution_buffer_bps": "2.00",
+            "funding_state": "unavailable",
+            "funding_adjustment_bps": null,
+            "other_explicit_risk_costs_bps": [],
+            "tradable_edge_bps": null,
+            "fair_value_sample_count": 1,
+            "fair_value_dispersion_bps": null,
+            "long_age_ms": 787,
+            "short_age_ms": 925,
+            "receive_skew_ms": 137,
+            "timestamp": 1788017148000000000,
+            "validity": "warming_up",
+            "rejection_reason": "warming_up",
+            "model_version": "p3-measurement-v1",
+            "config_fingerprint": "b1ba6ffb4f7f08e71dacd5511a97148b011313717e850201eb59e94aff69834e"
+          },
+          "opportunity": {
+            "pair_id": "sndk_entropy_lighter",
+            "symbol": "SNDK",
+            "long_venue": "lighter",
+            "short_venue": "entropy",
+            "executable_long_price": "1487.13",
+            "executable_short_price": "1486.60",
+            "executable_notional": "148.7130",
+            "raw_executable_premium_bps": "-3.5639116956822873588724590000",
+            "midline_bps": null,
+            "deviation_bps": null,
+            "fee_bps": null,
+            "depth_impact_bps": "0",
+            "execution_buffer_bps": "2.00",
+            "funding_state": "unavailable",
+            "funding_adjustment_bps": null,
+            "other_explicit_risk_costs_bps": [],
+            "tradable_edge_bps": null,
+            "regime": "reduce_only",
+            "validity": "warming_up",
+            "rejection_reason": "warming_up",
+            "increase_risk_economically_allowed": false,
+            "timestamp": 1788017148000000000,
+            "model_version": "p3-measurement-v1",
+            "config_fingerprint": "b1ba6ffb4f7f08e71dacd5511a97148b011313717e850201eb59e94aff69834e"
+          }
+        }
+      }
+    },
+    {
+      "tick_ts": 1788017149000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "entropy",
+            "short_venue": "lighter"
+          },
+          "tick_ts": 1788017149000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "stale_book"
+        },
+        "validity": "stale_book",
+        "reason": "short book age 1787ms exceeds 1500ms"
+      }
+    },
+    {
+      "tick_ts": 1788017149000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "lighter",
+            "short_venue": "entropy"
+          },
+          "tick_ts": 1788017149000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "stale_book"
+        },
+        "validity": "stale_book",
+        "reason": "long book age 1787ms exceeds 1500ms"
+      }
+    },
+    {
+      "tick_ts": 1788017150000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "entropy",
+            "short_venue": "lighter"
+          },
+          "tick_ts": 1788017150000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "stale_book"
+        },
+        "validity": "stale_book",
+        "reason": "long book age 1629ms exceeds 1500ms"
+      }
+    },
+    {
+      "tick_ts": 1788017150000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "lighter",
+            "short_venue": "entropy"
+          },
+          "tick_ts": 1788017150000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "stale_book"
+        },
+        "validity": "stale_book",
+        "reason": "long book age 2787ms exceeds 1500ms"
+      }
+    },
+    {
+      "tick_ts": 1788017151000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "entropy",
+            "short_venue": "lighter"
+          },
+          "tick_ts": 1788017151000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "stale_book"
+        },
+        "validity": "stale_book",
+        "reason": "long book age 2629ms exceeds 1500ms"
+      }
+    },
+    {
+      "tick_ts": 1788017151000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "lighter",
+            "short_venue": "entropy"
+          },
+          "tick_ts": 1788017151000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "stale_book"
+        },
+        "validity": "stale_book",
+        "reason": "long book age 3787ms exceeds 1500ms"
+      }
+    },
+    {
+      "tick_ts": 1788017152000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "entropy",
+            "short_venue": "lighter"
+          },
+          "tick_ts": 1788017152000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "stale_book"
+        },
+        "validity": "stale_book",
+        "reason": "long book age 3629ms exceeds 1500ms"
+      }
+    },
+    {
+      "tick_ts": 1788017152000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "lighter",
+            "short_venue": "entropy"
+          },
+          "tick_ts": 1788017152000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "stale_book"
+        },
+        "validity": "stale_book",
+        "reason": "short book age 3629ms exceeds 1500ms"
+      }
+    },
+    {
+      "tick_ts": 1788017153000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "entropy",
+            "short_venue": "lighter"
+          },
+          "tick_ts": 1788017153000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "stale_book"
+        },
+        "validity": "stale_book",
+        "reason": "long book age 4629ms exceeds 1500ms"
+      }
+    },
+    {
+      "tick_ts": 1788017153000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "lighter",
+            "short_venue": "entropy"
+          },
+          "tick_ts": 1788017153000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "stale_book"
+        },
+        "validity": "stale_book",
+        "reason": "short book age 4629ms exceeds 1500ms"
+      }
+    },
+    {
+      "tick_ts": 1788017154000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "entropy",
+            "short_venue": "lighter"
+          },
+          "tick_ts": 1788017154000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "venue_unhealthy"
+        },
+        "validity": "venue_unhealthy",
+        "reason": "long feed is not connected and fresh: entropy"
+      }
+    },
+    {
+      "tick_ts": 1788017154000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "lighter",
+            "short_venue": "entropy"
+          },
+          "tick_ts": 1788017154000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "venue_unhealthy"
+        },
+        "validity": "venue_unhealthy",
+        "reason": "long feed is not connected and fresh: lighter"
+      }
+    },
+    {
+      "tick_ts": 1788017155000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "entropy",
+            "short_venue": "lighter"
+          },
+          "tick_ts": 1788017155000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "venue_unhealthy"
+        },
+        "validity": "venue_unhealthy",
+        "reason": "long feed is not connected and fresh: entropy"
+      }
+    },
+    {
+      "tick_ts": 1788017155000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "lighter",
+            "short_venue": "entropy"
+          },
+          "tick_ts": 1788017155000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "venue_unhealthy"
+        },
+        "validity": "venue_unhealthy",
+        "reason": "long feed is not connected and fresh: lighter"
+      }
+    },
+    {
+      "tick_ts": 1788017156000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "entropy",
+            "short_venue": "lighter"
+          },
+          "tick_ts": 1788017156000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "venue_unhealthy"
+        },
+        "validity": "venue_unhealthy",
+        "reason": "long feed is not connected and fresh: entropy"
+      }
+    },
+    {
+      "tick_ts": 1788017156000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "lighter",
+            "short_venue": "entropy"
+          },
+          "tick_ts": 1788017156000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "venue_unhealthy"
+        },
+        "validity": "venue_unhealthy",
+        "reason": "long feed is not connected and fresh: lighter"
+      }
+    },
+    {
+      "tick_ts": 1788017157000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "entropy",
+        "short_venue": "lighter"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "entropy",
+            "short_venue": "lighter"
+          },
+          "tick_ts": 1788017157000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "venue_unhealthy"
+        },
+        "validity": "venue_unhealthy",
+        "reason": "short feed is not connected and fresh: lighter"
+      }
+    },
+    {
+      "tick_ts": 1788017157000000000,
+      "route": {
+        "pair_id": "sndk_entropy_lighter",
+        "long_venue": "lighter",
+        "short_venue": "entropy"
+      },
+      "outcome": {
+        "status": "rejected",
+        "fair_value": {
+          "route": {
+            "pair_id": "sndk_entropy_lighter",
+            "long_venue": "lighter",
+            "short_venue": "entropy"
+          },
+          "tick_ts": 1788017157000000000,
+          "reference_basis_bps": null,
+          "midline_bps": null,
+          "dispersion_bps": null,
+          "sample_count": 1,
+          "minimum_samples": 300,
+          "warmed_up": false,
+          "rejection": "venue_unhealthy"
+        },
+        "validity": "venue_unhealthy",
+        "reason": "long feed is not connected and fresh: lighter"
+      }
+    }
+  ],
+  "feed_state_rejections": [
+    {
+      "sequence": 1,
+      "event_time": 1788017143010525200,
+      "venue_id": "entropy",
+      "instrument_id": "io:SNDK-USD-PERP.HYPERLIQUID",
+      "connection": "connecting",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_connecting_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 2,
+      "event_time": 1788017143010525200,
+      "venue_id": "lighter",
+      "instrument_id": "SNDK-PERP.LIGHTER",
+      "connection": "connecting",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_connecting_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 3,
+      "event_time": 1788017143010525200,
+      "venue_id": "trade_xyz",
+      "instrument_id": "xyz:SNDK-USD-PERP.HYPERLIQUID",
+      "connection": "connecting",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_connecting_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 4,
+      "event_time": 1788017146556195700,
+      "venue_id": "entropy",
+      "instrument_id": "io:SNDK-USD-PERP.HYPERLIQUID",
+      "connection": "connected",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_connected_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 5,
+      "event_time": 1788017146556195700,
+      "venue_id": "lighter",
+      "instrument_id": "SNDK-PERP.LIGHTER",
+      "connection": "connected",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_connected_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 6,
+      "event_time": 1788017146556195700,
+      "venue_id": "trade_xyz",
+      "instrument_id": "xyz:SNDK-USD-PERP.HYPERLIQUID",
+      "connection": "connected",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_connected_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 22,
+      "event_time": 1788017153689370600,
+      "venue_id": "entropy",
+      "instrument_id": "io:SNDK-USD-PERP.HYPERLIQUID",
+      "connection": "disconnected",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_disconnected_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 23,
+      "event_time": 1788017153689370600,
+      "venue_id": "lighter",
+      "instrument_id": "SNDK-PERP.LIGHTER",
+      "connection": "disconnected",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_disconnected_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 24,
+      "event_time": 1788017153689370600,
+      "venue_id": "trade_xyz",
+      "instrument_id": "xyz:SNDK-USD-PERP.HYPERLIQUID",
+      "connection": "disconnected",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_disconnected_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 25,
+      "event_time": 1788017153689377700,
+      "venue_id": "entropy",
+      "instrument_id": "io:SNDK-USD-PERP.HYPERLIQUID",
+      "connection": "reconnecting",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_reconnecting_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 26,
+      "event_time": 1788017153689377700,
+      "venue_id": "lighter",
+      "instrument_id": "SNDK-PERP.LIGHTER",
+      "connection": "reconnecting",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_reconnecting_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 27,
+      "event_time": 1788017153689377700,
+      "venue_id": "trade_xyz",
+      "instrument_id": "xyz:SNDK-USD-PERP.HYPERLIQUID",
+      "connection": "reconnecting",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_reconnecting_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 28,
+      "event_time": 1788017155066554900,
+      "venue_id": "entropy",
+      "instrument_id": "io:SNDK-USD-PERP.HYPERLIQUID",
+      "connection": "connected",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_connected_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 29,
+      "event_time": 1788017155066554900,
+      "venue_id": "trade_xyz",
+      "instrument_id": "xyz:SNDK-USD-PERP.HYPERLIQUID",
+      "connection": "connected",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_connected_freshness_awaitingrecovery"
+    },
+    {
+      "sequence": 32,
+      "event_time": 1788017157212576800,
+      "venue_id": "lighter",
+      "instrument_id": "SNDK-PERP.LIGHTER",
+      "connection": "connected",
+      "freshness": "awaiting_recovery",
+      "reason": "transport_connected_freshness_awaitingrecovery"
+    }
+  ]
+}
