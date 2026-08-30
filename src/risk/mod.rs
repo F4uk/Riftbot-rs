@@ -1,4 +1,4 @@
-//! Runtime risk enforcement starts in P5; domain risk contracts live under `domain::risk`.
+//! Deterministic P5 hard-risk authorization; no execution or order capability exists here.
 
 pub mod limits;
 pub mod manager;

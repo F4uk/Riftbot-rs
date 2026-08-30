@@ -195,3 +195,31 @@ also has:
 | P5-P9 | Not started | No later-stage behavior added |
 
 The next allowed action is GPT Gate 4 review. P5 must not begin unless Gate 4 permits it.
+
+## Post-P5 status
+
+GPT Gate 4 passed. P4 was fast-forwarded to `main`, hosted run `33281603915` succeeded, and P5 Risk
+is implemented on `codex/p5-risk` for Gate 5 review. The repository now also has:
+
+- Distinct `Regime`, per-decision `RiskDecision`, and persistent/global `KillState` authority
+  contracts with most-restrictive-wins evaluation.
+- A deterministic `RiskManager` consuming P4 proposals, explicit logical time, health, effective
+  exposure, signed session PnL, and persistent kill state without any execution capability.
+- Increase-only P3 recency checks, including future-timestamp and maximum-age fail-closed behavior.
+- Projected pair-per-leg, per-venue absolute notional, global-delta, and session-loss hard limits
+  that include actual, reserved, and pending facts.
+- Validated, serde-hardened `RiskAssessment` output with typed reason codes, candidate/authorized
+  exposure projections, source size cap, policy fingerprint, and human-readable explanation.
+- A caller-timestamped `KillStateMachine` with a fail-closed transition graph and audit records.
+
+| Stage | Current status | Evidence |
+|---|---|---|
+| P0 Foundation | Gate 0 passed | `docs/stages/P0_REPORT.md` |
+| P1 Connectivity | Gate 1 passed; merged to `main` | `docs/stages/P1_REPORT.md` |
+| P2 Recorder & Replay | Gate 2 passed | `docs/stages/P2_REPORT.md` |
+| P3 Measurement | Gate 3 passed; merged to `main` | `docs/stages/P3_REPORT.md` |
+| P4 CJ Target Inventory | Gate 4 passed; merged to `main` | `docs/stages/P4_REPORT.md` |
+| P5 Risk | Implemented; Gate 5 pending | `docs/stages/P5_REPORT.md`, `docs/gates/GATE_5_REVIEW.md` |
+| P6-P9 | Not started | No execution/lifecycle implementation added |
+
+The next allowed action is GPT Gate 5 review. P6 must not begin unless Gate 5 permits it.

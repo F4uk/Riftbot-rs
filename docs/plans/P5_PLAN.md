@@ -1,6 +1,6 @@
 # P5 Risk-Only Plan
 
-Status: frozen for implementation on `codex/p5-risk`
+Status: implemented on `codex/p5-risk`; frozen as the Gate 5 scope record
 
 ## Scope and authority
 

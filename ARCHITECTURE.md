@@ -11,8 +11,8 @@ market::nautilus_bridge  <---- the only compiled Nautilus type conversion in P0
         v
 domain types (no Nautilus dependency)
         |
-        +--> P3 measurement --> P4 route candidates --> InventoryManager --> one target
-        +--> risk gate (future P5)
+        +--> P3 measurement --> P4 route candidates --> InventoryManager --> one proposal
+        +--> P5 deterministic hard-risk authorization
         +--> execution basket --> Nautilus orders (future P6)
         +--> recording/replay (P2) and PnL (future P7+)
 ```
@@ -72,8 +72,37 @@ P3 measurement economics ----> InventoryManager <------- actual + reserved + pen
 ```
 
 The grid uses a deterministic floor-step rule and matched notional per leg. Increases require valid,
-positive P3 economics and are capped by the measured executable notional. Reductions do not require
-a favorable entry edge. Reversals flatten the old orientation before any opposite increase.
+positive P3 economics and are capped by the smaller checked notional measured on the two executable
+legs. Reductions do not require a favorable entry edge. Reversals flatten the old orientation before
+any opposite increase.
+
+## P5 hard-risk authorization boundary
+
+```text
+P4 InventoryDecision + P3 size basis + logical now
+        + current/reserved/pending exposure
+        + explicit venue/account/system health
+        + Regime + persistent KillState + signed session PnL
+                              |
+                              v
+                         RiskManager
+                              |
+                              v
+                     validated RiskAssessment
+                     (no intent, basket, or order)
+```
+
+`Regime`, per-decision `RiskDecision`, and persistent/global `KillState` are distinct. The most
+restrictive applicable permission wins. Increases require a non-future, sufficiently recent P3
+measurement and complete healthy inputs, and P5 can only preserve or reduce the P4/P3 size. Hard
+limits are evaluated on projected effective exposure including actual, reserved, and pending facts.
+Pair limits use matched notional per leg; each venue limit uses that venue's absolute notional; the
+global signed delta and signed-session-PnL loss checks remain independent.
+
+P5 decision timing is caller supplied. Live composition will later provide Nautilus logical time and
+replay will provide recorded time; the risk module imports no wall clock. `KillStateMachine` validates
+an explicit recovery/escalation graph and records caller-timestamped transitions without creating a
+venue action.
 
 ## Stage ownership
 
