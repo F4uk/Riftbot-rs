@@ -200,8 +200,13 @@ mod tests {
     };
     use crate::domain::{
         ids::{DecisionId, InstrumentId, IntentId, Symbol, VenueId},
-        numeric::{BaseQty, Bps, Delta, Notional, Price, UnixNanos},
-        risk::{KillState, Regime, RiskAssessment, RiskContext, RiskDecision},
+        numeric::{
+            BaseQty, Bps, Delta, DurationMillis, Money, Notional, Price, TargetFraction, UnixNanos,
+        },
+        risk::{
+            KillState, Regime, RiskAssessment, RiskAssessmentParams, RiskContext, RiskDecision,
+            RiskExposureAudit, RiskInputAction, RiskLimitsSnapshot, RiskReasonCode,
+        },
     };
 
     fn leg(venue: &str, side: OrderSide) -> Result<ExecutionLeg, Box<dyn Error>> {
@@ -236,11 +241,53 @@ mod tests {
             risk_context: RiskContext {
                 regime: Regime::Normal,
                 kill_state: KillState::Ready,
-                assessment: RiskAssessment {
-                    decision: RiskDecision::Approve,
-                    reason: "limits satisfied".to_owned(),
+                assessment: RiskAssessment::new(RiskAssessmentParams {
+                    decision_id: DecisionId::try_from("decision-1")?,
                     evaluated_at: UnixNanos(1),
-                },
+                    input_action: RiskInputAction::IncreaseRisk,
+                    requested_change_notional_per_leg: Money::new(Decimal::from(100)),
+                    proposed_change_notional_per_leg: Notional::new(Decimal::from(100))?,
+                    authorized_change_notional_per_leg: Notional::new(Decimal::from(100))?,
+                    decision: RiskDecision::Approve,
+                    regime: Regime::Normal,
+                    kill_state: KillState::Ready,
+                    reason_codes: vec![RiskReasonCode::Approved],
+                    explanation: "limits satisfied".to_owned(),
+                    exposure: Some(RiskExposureAudit {
+                        pair_current_notional_per_leg: Notional::new(Decimal::ZERO)?,
+                        pair_candidate_projected_notional_per_leg: Notional::new(Decimal::from(
+                            100,
+                        ))?,
+                        pair_authorized_projected_notional_per_leg: Notional::new(Decimal::from(
+                            100,
+                        ))?,
+                        long_venue: VenueId::try_from("lighter")?,
+                        long_current_notional: Notional::new(Decimal::ZERO)?,
+                        long_candidate_projected_notional: Notional::new(Decimal::from(100))?,
+                        long_authorized_projected_notional: Notional::new(Decimal::from(100))?,
+                        short_venue: VenueId::try_from("entropy")?,
+                        short_current_notional: Notional::new(Decimal::ZERO)?,
+                        short_candidate_projected_notional: Notional::new(Decimal::from(100))?,
+                        short_authorized_projected_notional: Notional::new(Decimal::from(100))?,
+                        global_delta_current: Delta::new(Decimal::ZERO),
+                        global_delta_candidate_projected: Delta::new(Decimal::ZERO),
+                        global_delta_authorized_projected: Delta::new(Decimal::ZERO),
+                        session_pnl: Some(Money::new(Decimal::ZERO)),
+                        session_loss: Some(Notional::new(Decimal::ZERO)?),
+                    }),
+                    measurement_age_ms: Some(DurationMillis(0)),
+                    measurement_safe_matched_notional_cap: Some(Notional::new(Decimal::from(100))?),
+                    limits: RiskLimitsSnapshot {
+                        max_venue_notional: Notional::new(Decimal::from(1_000))?,
+                        max_pair_notional_per_leg: Notional::new(Decimal::from(1_500))?,
+                        max_global_delta: Delta::new(Decimal::from(25)),
+                        max_session_loss: Notional::new(Decimal::from(100))?,
+                        max_measurement_age_ms: DurationMillis(1_500),
+                        degraded_authorization_fraction: TargetFraction::new(Decimal::new(5, 1))?,
+                        session_loss_required_state: KillState::Flatten,
+                    },
+                    config_fingerprint: "a".repeat(64),
+                })?,
             },
         })
     }
