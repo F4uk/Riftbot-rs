@@ -19,7 +19,7 @@ from this package.
   `SUCCESS`
 - P6 implementation commit: the commit containing this package; final SHA is reported after push
 - Hosted P6 CI: required before handoff and reported with the final SHA
-- Tests: 193 passed, 0 failed; 48 are P6 deterministic execution/fault tests
+- Tests: 203 passed, 0 failed; 58 are P6 deterministic execution/fault tests
 
 ## Gate checklist
 
@@ -46,17 +46,22 @@ from this package.
   proposal, P3 requested quantity, either measured leg, or safe matched-notional cap.
 - [x] Only `MarketableLimit` and `ImmediateOrCancel` exist; there is no unbounded market fallback.
 - [x] Business state is Nautilus-independent. P6 provides only an `ExecutionPort` trait and fake
-  test port; no real implementation or network path exists.
+  test port; no real implementation or network path exists. Typed dispatch outcomes distinguish
+  guaranteed-not-sent from ambiguity; ambiguous partial/non-atomic handoff enters `Unknown` and
+  cannot cause a blind resend.
 - [x] Exactly two normal strategy children are prepared and journaled before both submit commands
   are returned in one action batch.
-- [x] Child identity is stable by root intent, leg index, and generation. Timeout becomes
-  `Unknown`; no timeout path creates a replacement.
+- [x] Child identity is stable by root intent, leg index, and generation. A newer timeout on a
+  genuinely unresolved submission becomes `Unknown`; no timeout path creates a replacement.
 - [x] The full frozen basket and cancel state sets are explicit. `Complete` requires terminal
   children, no unknown state, residual tolerance, and no outstanding residual-changing action.
 - [x] Actual cumulative fills, never requested quantity, drive signed residual. Average-price /
   notional arithmetic and side-aware fill guards are revalidated.
 - [x] Duplicate fills are idempotent; conflicting duplicate IDs and regressive cumulative data fail
   safe. Late and out-of-order events remain exposure-visible.
+- [x] Stale acknowledgement/cancel ambiguity observations cannot regress newer authoritative
+  ack/fill/cancel truth; equivalent authoritative event sequences converge despite stale-timer
+  delivery order.
 - [x] The critical filled-leg plus opposite-`Unknown` plus late-fill scenario cannot double hedge.
 - [x] Recovery waits for authoritative initial state, uses finite price bounds, advances by stable
   bounded generation, and ends in `FailedSafe`/`FlattenRequired` when it cannot improve.
@@ -64,7 +69,13 @@ from this package.
   updates actual residual.
 - [x] One active increase reservation per pair is acquired before dispatch, blocks a second
   increase, overlays into `EffectiveInventory`, and is not freed by ambiguity or recovery.
-- [x] A late fill reopening a completed canceled increase basket reacquires reservation visibility.
+- [x] Filled `Complete` converts ownership to `FilledAwaitingInventorySync`; its missing actual
+  amount stays pending/effective and blocks another increase until typed authoritative inventory
+  evidence proves account incorporation.
+- [x] An account view that already includes converted fills is not double-counted; proof identity,
+  route, logical time, and actual amount are checked before the journaled release.
+- [x] Zero-fill completion releases normally. A later fill reopens the basket, reacquires ownership,
+  and restores effective exposure visibility.
 - [x] Intent/preflight/child/command/event/fill/cancel/timeout/transition/residual/recovery/terminal
   evidence is appended through a journal boundary; journal failure returns no command batch.
 - [x] Serde cannot forge enlarged intent authority, incoherent child/fill accounting, impossible
@@ -72,7 +83,7 @@ from this package.
   authority.
 - [x] Same logical command/event sequence yields identical coordinator state, journal, and
   reservation state.
-- [x] Repository policy, formatting, locked Clippy, 193 tests, and pinned adapter compilation pass.
+- [x] Repository policy, formatting, locked Clippy, 203 tests, and pinned adapter compilation pass.
 - [x] No credentials, live/tiny-live trading, P7 reconciliation, transfer, maker, multi-leg,
   distributed infrastructure, custom venue client, or Nautilus core change is present.
 
@@ -91,8 +102,12 @@ from this package.
 6. Move preflight past P5 freshness/intent expiry and move executable prices/depth/economics beyond
    the frozen bounds; neither initial submit may escape.
 7. Attempt concurrent increases for one pair and verify the reservation appears in the next
-   `EffectiveInventory` input.
-8. Search P6 for wall-clock use, private credential access, venue transport, real port
+   `EffectiveInventory` input. Complete it with fills, verify converted exposure remains visible and
+   still blocks another increase, then supply matching account-sync proof and verify release.
+8. Deliver stale timeout/cancel ambiguity both before and after newer authoritative events and
+   verify the same authoritative state. Return ambiguous dispatch from the fake port and verify
+   `Unknown` with no replacement command.
+9. Search P6 for wall-clock use, private credential access, venue transport, real port
    implementation, market-order fallback, or P7 startup/account reconciliation; none should exist.
 
 P6 ends at this review package. Do not begin P7.

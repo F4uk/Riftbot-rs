@@ -15,7 +15,8 @@ use crate::{
             ResidualHedgeIntentRequest,
         },
         ids::{
-            ClientOrderId, CommandId, IntentId, PairId, PreflightId, Symbol, VenueId, VenueOrderId,
+            ClientOrderId, CommandId, EvidenceId, IntentId, PairId, PreflightId, Symbol, VenueId,
+            VenueOrderId,
         },
         inventory::{EffectiveInventory, InventoryDomainError, OrientedExposure},
         market::{FeedHealth, VenueBook},
@@ -115,11 +116,23 @@ pub struct ExecutionCommandBatch {
     pub commands: Vec<ExecutionCommand>,
 }
 
-/// Runtime bridge contract. P6 ships no real implementation.
-pub trait ExecutionPort {
-    type Error;
+/// Typed result of handing one already-journaled command batch to a runtime bridge.
+///
+/// `AcceptedForDispatch` is not a venue acknowledgement. `DefinitelyNotSent` may be returned only
+/// when the bridge can guarantee that no command in the batch reached any external execution
+/// boundary. Every transport failure without that guarantee is `Ambiguous`; callers must feed the
+/// outcome back to the coordinator, which enters `Unknown` without creating replacement orders.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DispatchOutcome {
+    AcceptedForDispatch,
+    DefinitelyNotSent { reason: String },
+    Ambiguous { reason: String },
+}
 
-    fn dispatch(&mut self, batch: &ExecutionCommandBatch) -> Result<(), Self::Error>;
+/// Runtime bridge contract. P6 ships no real implementation and never auto-retries a batch.
+pub trait ExecutionPort {
+    fn dispatch(&mut self, batch: &ExecutionCommandBatch) -> DispatchOutcome;
 }
 
 /// Authoritative or explicitly ambiguous event delivered by the runtime bridge.
@@ -222,10 +235,21 @@ pub enum ExecutionJournalRecord {
         notional_per_leg: Notional,
         timestamp: UnixNanos,
     },
+    ReservationConvertedToFilled {
+        pair_id: PairId,
+        intent_id: IntentId,
+        filled_notional_per_leg: Notional,
+        timestamp: UnixNanos,
+    },
     ReservationReleased {
         pair_id: PairId,
         intent_id: IntentId,
-        converted_to_filled: bool,
+        reason: ReservationReleaseReason,
+        inventory_sync_evidence_id: Option<EvidenceId>,
+        timestamp: UnixNanos,
+    },
+    DispatchObserved {
+        outcome: DispatchOutcome,
         timestamp: UnixNanos,
     },
     ChildPrepared {
@@ -310,14 +334,47 @@ impl ExecutionJournal for InMemoryExecutionJournal {
     }
 }
 
-/// One active pair reservation visible to subsequent effective-inventory composition.
+/// P6 ownership state retained after lifecycle completion until account truth catches up.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PairReservationState {
+    Active,
+    FilledAwaitingInventorySync { completed_at: UnixNanos },
+}
+
+/// Typed reason for releasing P6 pair ownership.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReservationReleaseReason {
+    ZeroFilledExposure,
+    AuthoritativeInventorySync,
+}
+
+/// Explicit account/cache proof supplied by the future P7 boundary, not produced by P6 itself.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoritativeInventorySyncEvidence {
+    pub evidence_id: EvidenceId,
+    pub pair_id: PairId,
+    pub intent_id: IntentId,
+    pub symbol: Symbol,
+    pub long_venue: VenueId,
+    pub short_venue: VenueId,
+    pub observed_at: UnixNanos,
+}
+
+/// One owned pair reservation visible to subsequent effective-inventory composition.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PairReservation {
     pub intent_id: IntentId,
     pub symbol: Symbol,
     pub long_venue: VenueId,
     pub short_venue: VenueId,
+    pub state: PairReservationState,
+    /// Active authorization or filled matched exposure, depending on `state`.
     pub notional_per_leg: Notional,
+    /// Actual account exposure frozen when this increase acquired ownership.
+    pub baseline_actual_notional_per_leg: Notional,
     pub acquired_at: UnixNanos,
 }
 
@@ -338,7 +395,10 @@ impl PairReservationBook {
         self.active.get(pair_id).map(|value| value.notional_per_leg)
     }
 
-    /// Overlays active P6 reservations onto the P4 inventory input without mutating P4 math.
+    /// Overlays P6-owned exposure onto the P4 inventory input without mutating P4 math.
+    ///
+    /// Active authorization is reserved. Completed fills awaiting account synchronization are
+    /// pending only to the extent the supplied actual account state has not incorporated them.
     pub fn effective_inventory_with_reservations(
         &self,
         inventory: &EffectiveInventory,
@@ -350,27 +410,70 @@ impl PairReservationBook {
             return Err(CoordinatorError::ReservationMismatch);
         }
         let mut exposures = inventory.exposures.clone();
-        if let Some(exposure) = exposures.iter_mut().find(|exposure| {
+        let existing = exposures.iter_mut().find(|exposure| {
             exposure.long_venue == reservation.long_venue
                 && exposure.short_venue == reservation.short_venue
-        }) {
-            exposure.reserved_notional_per_leg = Notional::new(
-                exposure
-                    .reserved_notional_per_leg
-                    .value()
-                    .checked_add(reservation.notional_per_leg.value())
-                    .ok_or(CoordinatorError::ReservationArithmetic)?,
-            )
-            .map_err(|_| CoordinatorError::ReservationArithmetic)?;
+        });
+        if let Some(exposure) = existing {
+            match reservation.state {
+                PairReservationState::Active => {
+                    exposure.reserved_notional_per_leg = Notional::new(
+                        exposure
+                            .reserved_notional_per_leg
+                            .value()
+                            .checked_add(reservation.notional_per_leg.value())
+                            .ok_or(CoordinatorError::ReservationArithmetic)?,
+                    )
+                    .map_err(|_| CoordinatorError::ReservationArithmetic)?;
+                }
+                PairReservationState::FilledAwaitingInventorySync { .. } => {
+                    let expected_actual = reservation
+                        .baseline_actual_notional_per_leg
+                        .value()
+                        .checked_add(reservation.notional_per_leg.value())
+                        .ok_or(CoordinatorError::ReservationArithmetic)?;
+                    let missing = expected_actual
+                        .checked_sub(exposure.actual_notional_per_leg.value())
+                        .ok_or(CoordinatorError::ReservationArithmetic)?
+                        .max(Decimal::ZERO);
+                    exposure.pending_notional_per_leg = Notional::new(
+                        exposure
+                            .pending_notional_per_leg
+                            .value()
+                            .checked_add(missing)
+                            .ok_or(CoordinatorError::ReservationArithmetic)?,
+                    )
+                    .map_err(|_| CoordinatorError::ReservationArithmetic)?;
+                }
+            }
         } else {
+            let (reserved, pending) = match reservation.state {
+                PairReservationState::Active => (
+                    reservation.notional_per_leg,
+                    Notional::new(Decimal::ZERO)
+                        .map_err(|_| CoordinatorError::ReservationArithmetic)?,
+                ),
+                PairReservationState::FilledAwaitingInventorySync { .. } => {
+                    let pending = reservation
+                        .baseline_actual_notional_per_leg
+                        .value()
+                        .checked_add(reservation.notional_per_leg.value())
+                        .ok_or(CoordinatorError::ReservationArithmetic)?;
+                    (
+                        Notional::new(Decimal::ZERO)
+                            .map_err(|_| CoordinatorError::ReservationArithmetic)?,
+                        Notional::new(pending)
+                            .map_err(|_| CoordinatorError::ReservationArithmetic)?,
+                    )
+                }
+            };
             exposures.push(OrientedExposure::new(
                 reservation.long_venue.clone(),
                 reservation.short_venue.clone(),
                 Notional::new(Decimal::ZERO)
                     .map_err(|_| CoordinatorError::ReservationArithmetic)?,
-                reservation.notional_per_leg,
-                Notional::new(Decimal::ZERO)
-                    .map_err(|_| CoordinatorError::ReservationArithmetic)?,
+                reserved,
+                pending,
             )?);
         }
         Ok(EffectiveInventory::new(
@@ -392,7 +495,7 @@ impl PairReservationBook {
         Ok(())
     }
 
-    fn finalize(&mut self, pair_id: &PairId, intent_id: &IntentId) -> Result<(), CoordinatorError> {
+    fn release(&mut self, pair_id: &PairId, intent_id: &IntentId) -> Result<(), CoordinatorError> {
         if self
             .active
             .get(pair_id)
@@ -401,6 +504,86 @@ impl PairReservationBook {
             return Err(CoordinatorError::ReservationMismatch);
         }
         self.active.remove(pair_id);
+        Ok(())
+    }
+
+    fn convert_to_filled(
+        &mut self,
+        pair_id: &PairId,
+        intent_id: &IntentId,
+        filled_notional_per_leg: Notional,
+        completed_at: UnixNanos,
+    ) -> Result<(), CoordinatorError> {
+        let reservation = self
+            .active
+            .get_mut(pair_id)
+            .filter(|reservation| &reservation.intent_id == intent_id)
+            .ok_or(CoordinatorError::ReservationMismatch)?;
+        reservation.state = PairReservationState::FilledAwaitingInventorySync { completed_at };
+        reservation.notional_per_leg = filled_notional_per_leg;
+        Ok(())
+    }
+
+    fn reactivate(
+        &mut self,
+        pair_id: &PairId,
+        intent_id: &IntentId,
+        authorized_notional_per_leg: Notional,
+    ) -> Result<(), CoordinatorError> {
+        let reservation = self
+            .active
+            .get_mut(pair_id)
+            .filter(|reservation| &reservation.intent_id == intent_id)
+            .ok_or(CoordinatorError::ReservationMismatch)?;
+        reservation.state = PairReservationState::Active;
+        reservation.notional_per_leg = authorized_notional_per_leg;
+        Ok(())
+    }
+
+    /// Releases converted ownership only after typed evidence and actual account state prove that
+    /// the completed fills are incorporated. P6 validates the proof but does not obtain it.
+    pub fn confirm_authoritative_inventory_sync<J: ExecutionJournal>(
+        &mut self,
+        evidence: &AuthoritativeInventorySyncEvidence,
+        inventory: &EffectiveInventory,
+        journal: &mut J,
+    ) -> Result<(), CoordinatorError> {
+        let reservation = self
+            .active
+            .get(&evidence.pair_id)
+            .ok_or(CoordinatorError::ReservationMismatch)?;
+        let PairReservationState::FilledAwaitingInventorySync { completed_at } = reservation.state
+        else {
+            return Err(CoordinatorError::InventorySyncProofInvalid);
+        };
+        if reservation.intent_id != evidence.intent_id
+            || reservation.symbol != evidence.symbol
+            || reservation.long_venue != evidence.long_venue
+            || reservation.short_venue != evidence.short_venue
+            || inventory.pair_id != evidence.pair_id
+            || inventory.symbol != evidence.symbol
+            || evidence.observed_at < completed_at
+        {
+            return Err(CoordinatorError::InventorySyncProofInvalid);
+        }
+        let projected = inventory.project(&reservation.long_venue, &reservation.short_venue)?;
+        let expected_actual = reservation
+            .baseline_actual_notional_per_leg
+            .value()
+            .checked_add(reservation.notional_per_leg.value())
+            .ok_or(CoordinatorError::ReservationArithmetic)?;
+        if projected.actual_notional_per_leg.value() < expected_actual {
+            return Err(CoordinatorError::InventorySyncProofInvalid);
+        }
+        let record = ExecutionJournalRecord::ReservationReleased {
+            pair_id: evidence.pair_id.clone(),
+            intent_id: evidence.intent_id.clone(),
+            reason: ReservationReleaseReason::AuthoritativeInventorySync,
+            inventory_sync_evidence_id: Some(evidence.evidence_id.clone()),
+            timestamp: evidence.observed_at,
+        };
+        journal.append_batch(&[record])?;
+        self.active.remove(&evidence.pair_id);
         Ok(())
     }
 }
@@ -427,6 +610,10 @@ pub enum CoordinatorError {
     ReservationMismatch,
     #[error("reservation arithmetic failed closed")]
     ReservationArithmetic,
+    #[error("authoritative inventory synchronization proof is missing or inconsistent")]
+    InventorySyncProofInvalid,
+    #[error("dispatch outcome omitted required deterministic evidence")]
+    InvalidDispatchOutcome,
     #[error("execution event references an unknown child identity")]
     UnknownChild,
     #[error("execution identity cannot be represented deterministically")]
@@ -629,14 +816,7 @@ impl ExecutionBasketCoordinator {
         if self.intent.purpose() == ExecutionIntentPurpose::IncreaseRisk {
             next_reservations.reserve(
                 self.intent.pair_id().clone(),
-                PairReservation {
-                    intent_id: self.intent.intent_id().clone(),
-                    symbol: self.intent.symbol().clone(),
-                    long_venue: self.intent.legs()[0].venue.clone(),
-                    short_venue: self.intent.legs()[1].venue.clone(),
-                    notional_per_leg: self.intent.authorized_matched_notional_per_leg(),
-                    acquired_at: timestamp,
-                },
+                increase_reservation(&self.intent, timestamp)?,
             )?;
             records.push(ExecutionJournalRecord::ReservationAcquired {
                 pair_id: self.intent.pair_id().clone(),
@@ -732,14 +912,7 @@ impl ExecutionBasketCoordinator {
         {
             match next_reservations.active(next.intent.pair_id()) {
                 None => {
-                    let reservation = PairReservation {
-                        intent_id: next.intent.intent_id().clone(),
-                        symbol: next.intent.symbol().clone(),
-                        long_venue: next.intent.legs()[0].venue.clone(),
-                        short_venue: next.intent.legs()[1].venue.clone(),
-                        notional_per_leg: next.intent.authorized_matched_notional_per_leg(),
-                        acquired_at: event.logical_time(),
-                    };
+                    let reservation = increase_reservation(&next.intent, event.logical_time())?;
                     next_reservations.reserve(next.intent.pair_id().clone(), reservation)?;
                     records.push(ExecutionJournalRecord::ReservationAcquired {
                         pair_id: next.intent.pair_id().clone(),
@@ -750,6 +923,11 @@ impl ExecutionBasketCoordinator {
                     next.reservation_finalized = false;
                 }
                 Some(reservation) if reservation.intent_id == *next.intent.intent_id() => {
+                    next_reservations.reactivate(
+                        next.intent.pair_id(),
+                        next.intent.intent_id(),
+                        next.intent.authorized_matched_notional_per_leg(),
+                    )?;
                     next.reservation_finalized = false;
                 }
                 Some(_) => next.mark_failed_safe(
@@ -765,19 +943,31 @@ impl ExecutionBasketCoordinator {
             event.logical_time(),
         );
         if next.state == BasketState::Complete && !next.reservation_finalized {
-            let has_fills = next
-                .children
-                .iter()
-                .take(2)
-                .any(|child| child.cumulative_filled_notional > Decimal::ZERO);
             if next.intent.purpose() == ExecutionIntentPurpose::IncreaseRisk {
-                next_reservations.finalize(next.intent.pair_id(), next.intent.intent_id())?;
-                records.push(ExecutionJournalRecord::ReservationReleased {
-                    pair_id: next.intent.pair_id().clone(),
-                    intent_id: next.intent.intent_id().clone(),
-                    converted_to_filled: has_fills,
-                    timestamp: event.logical_time(),
-                });
+                let filled_notional_per_leg = next.filled_matched_notional_per_leg()?;
+                if filled_notional_per_leg.value() > Decimal::ZERO {
+                    next_reservations.convert_to_filled(
+                        next.intent.pair_id(),
+                        next.intent.intent_id(),
+                        filled_notional_per_leg,
+                        event.logical_time(),
+                    )?;
+                    records.push(ExecutionJournalRecord::ReservationConvertedToFilled {
+                        pair_id: next.intent.pair_id().clone(),
+                        intent_id: next.intent.intent_id().clone(),
+                        filled_notional_per_leg,
+                        timestamp: event.logical_time(),
+                    });
+                } else {
+                    next_reservations.release(next.intent.pair_id(), next.intent.intent_id())?;
+                    records.push(ExecutionJournalRecord::ReservationReleased {
+                        pair_id: next.intent.pair_id().clone(),
+                        intent_id: next.intent.intent_id().clone(),
+                        reason: ReservationReleaseReason::ZeroFilledExposure,
+                        inventory_sync_evidence_id: None,
+                        timestamp: event.logical_time(),
+                    });
+                }
             }
             next.reservation_finalized = true;
             records.push(ExecutionJournalRecord::Terminal {
@@ -804,6 +994,57 @@ impl ExecutionBasketCoordinator {
         journal.append_batch(&records)?;
         *self = next;
         *reservations = next_reservations;
+        Ok(())
+    }
+
+    /// Records the bridge's batch-level dispatch observation.
+    ///
+    /// An ambiguous result can mean that any subset of the batch reached a venue boundary. It
+    /// therefore moves only still-unresolved submitting children to `Unknown` and never emits or
+    /// prepares a replacement generation. Authoritative evidence already observed by a child is
+    /// monotonic and is not regressed by a later-delivered stale ambiguity observation.
+    pub fn handle_dispatch_outcome<J: ExecutionJournal>(
+        &mut self,
+        outcome: DispatchOutcome,
+        observed_at: UnixNanos,
+        journal: &mut J,
+    ) -> Result<(), CoordinatorError> {
+        if self.children.is_empty()
+            || matches!(
+                &outcome,
+                DispatchOutcome::DefinitelyNotSent { reason }
+                    | DispatchOutcome::Ambiguous { reason }
+                    if reason.trim().is_empty()
+            )
+        {
+            return Err(CoordinatorError::InvalidDispatchOutcome);
+        }
+        let mut next = self.clone();
+        let previous_state = next.state;
+        if matches!(outcome, DispatchOutcome::Ambiguous { .. }) {
+            for child in next.children.iter_mut().take(next.intent.legs().len()) {
+                let authoritative_is_newer = child
+                    .last_receive_ts
+                    .is_some_and(|receive_ts| receive_ts >= observed_at);
+                if child.state == ChildOrderState::Submitting && !authoritative_is_newer {
+                    child.state = ChildOrderState::Unknown;
+                }
+            }
+            next.refresh_state(observed_at);
+        }
+        let mut records = vec![ExecutionJournalRecord::DispatchObserved {
+            outcome,
+            timestamp: observed_at,
+        }];
+        append_state_records(
+            &mut records,
+            previous_state,
+            next.state,
+            "typed runtime dispatch outcome observed",
+            observed_at,
+        );
+        journal.append_batch(&records)?;
+        *self = next;
         Ok(())
     }
 
@@ -1181,8 +1422,14 @@ impl ExecutionBasketCoordinator {
                 child.last_exchange_ts = max_time(child.last_exchange_ts, *exchange_ts);
                 child.last_receive_ts = max_time(child.last_receive_ts, *receive_ts);
             }
-            ExecutionEvent::CancelUnknown { .. } => {
-                if child.cancel_state == CancelState::Unknown {
+            ExecutionEvent::CancelUnknown { observed_at, .. } => {
+                if matches!(
+                    child.cancel_state,
+                    CancelState::Unknown | CancelState::Confirmed | CancelState::Rejected
+                ) || child
+                    .last_receive_ts
+                    .is_some_and(|receive_ts| receive_ts >= *observed_at)
+                {
                     return Ok(true);
                 }
                 if child.cancel_state != CancelState::Requested {
@@ -1192,12 +1439,18 @@ impl ExecutionBasketCoordinator {
                 child.cancel_state = CancelState::Unknown;
                 child.state = ChildOrderState::Unknown;
             }
-            ExecutionEvent::AcknowledgementTimeout { .. } => {
+            ExecutionEvent::AcknowledgementTimeout { observed_at, .. } => {
                 if child.state == ChildOrderState::Unknown {
                     return Ok(true);
                 }
-                if !child.is_terminal() {
+                if child.state == ChildOrderState::Submitting
+                    && child
+                        .last_receive_ts
+                        .is_none_or(|receive_ts| receive_ts < *observed_at)
+                {
                     child.state = ChildOrderState::Unknown;
+                } else {
+                    return Ok(true);
                 }
             }
         }
@@ -1333,6 +1586,39 @@ impl ExecutionBasketCoordinator {
             .collect()
     }
 
+    fn filled_matched_notional_per_leg(&self) -> Result<Notional, CoordinatorError> {
+        let [long_leg, short_leg] = self.intent.legs() else {
+            return Err(CoordinatorError::InvalidRootIntent);
+        };
+        let mut long_exposure = Decimal::ZERO;
+        let mut short_exposure = Decimal::ZERO;
+        for child in &self.children {
+            let filled = child.cumulative_filled_notional;
+            if child.leg.venue == long_leg.venue && child.leg.instrument == long_leg.instrument {
+                long_exposure = match child.leg.side {
+                    OrderSide::Buy => long_exposure.checked_add(filled),
+                    OrderSide::Sell => long_exposure.checked_sub(filled),
+                }
+                .ok_or(CoordinatorError::ReservationArithmetic)?;
+            } else if child.leg.venue == short_leg.venue
+                && child.leg.instrument == short_leg.instrument
+            {
+                short_exposure = match child.leg.side {
+                    OrderSide::Sell => short_exposure.checked_add(filled),
+                    OrderSide::Buy => short_exposure.checked_sub(filled),
+                }
+                .ok_or(CoordinatorError::ReservationArithmetic)?;
+            } else {
+                return Err(CoordinatorError::ReservationMismatch);
+            }
+        }
+        if long_exposure < Decimal::ZERO || short_exposure < Decimal::ZERO {
+            return Err(CoordinatorError::ReservationArithmetic);
+        }
+        Notional::new(long_exposure.min(short_exposure))
+            .map_err(|_| CoordinatorError::ReservationArithmetic)
+    }
+
     fn fail_safe_transaction<J: ExecutionJournal>(
         &mut self,
         timestamp: UnixNanos,
@@ -1363,6 +1649,35 @@ impl ExecutionBasketCoordinator {
         self.required_authority = Some(RiskDecision::FlattenRequired);
         self.terminal_reason = Some(reason.to_owned());
     }
+}
+
+fn increase_reservation(
+    intent: &ExecutionIntent,
+    acquired_at: UnixNanos,
+) -> Result<PairReservation, CoordinatorError> {
+    let [long_leg, short_leg] = intent.legs() else {
+        return Err(CoordinatorError::InvalidRootIntent);
+    };
+    let effective_actual = intent
+        .source_inventory()
+        .and_then(|source| source.effective_actual.as_ref())
+        .ok_or(CoordinatorError::InvalidRootIntent)?;
+    if !effective_actual
+        .direction
+        .matches_route(&long_leg.venue, &short_leg.venue)
+    {
+        return Err(CoordinatorError::ReservationMismatch);
+    }
+    Ok(PairReservation {
+        intent_id: intent.intent_id().clone(),
+        symbol: intent.symbol().clone(),
+        long_venue: long_leg.venue.clone(),
+        short_venue: short_leg.venue.clone(),
+        state: PairReservationState::Active,
+        notional_per_leg: intent.authorized_matched_notional_per_leg(),
+        baseline_actual_notional_per_leg: effective_actual.actual_notional_per_leg,
+        acquired_at,
+    })
 }
 
 fn validate_execution_time(

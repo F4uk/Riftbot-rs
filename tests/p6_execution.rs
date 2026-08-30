@@ -1,4 +1,4 @@
-use std::{error::Error, fmt};
+use std::error::Error;
 
 use riftbot::{
     config::{AppConfig, measurement_config_fingerprint, parse_toml},
@@ -13,8 +13,8 @@ use riftbot::{
             PairId, PreflightId, Symbol, VenueId, VenueOrderId,
         },
         inventory::{
-            EffectiveActual, EffectiveInventory, TargetDirection, TargetInventory,
-            TargetInventoryParams,
+            EffectiveActual, EffectiveInventory, OrientedExposure, TargetDirection,
+            TargetInventory, TargetInventoryParams,
         },
         market::{
             BookLevel, BookVersion, FeedConnectionState, FeedFreshness, FeedHealth, VenueBook,
@@ -30,9 +30,11 @@ use riftbot::{
     },
     execution::{
         coordinator::{
-            CoordinatorError, ExecutionBasketCoordinator, ExecutionCommand, ExecutionCommandBatch,
-            ExecutionEvent, ExecutionJournalRecord, ExecutionPort, InMemoryExecutionJournal,
-            IncreasePreflightInput, PairReservationBook,
+            AuthoritativeInventorySyncEvidence, CoordinatorError, DispatchOutcome,
+            ExecutionBasketCoordinator, ExecutionCommand, ExecutionCommandBatch, ExecutionEvent,
+            ExecutionJournalRecord, ExecutionPort, InMemoryExecutionJournal,
+            IncreasePreflightInput, PairReservationBook, PairReservationState,
+            ReservationReleaseReason,
         },
         state_machine::{AppliedFill, BasketState, CancelState, ChildOrderState},
     },
@@ -63,29 +65,27 @@ type FixtureIds = (
     InstrumentId,
 );
 
-#[derive(Debug)]
-struct FakePortError;
-
-impl fmt::Display for FakePortError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("fake port error")
-    }
-}
-
-impl Error for FakePortError {}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct FakeExecutionPort {
     batches: Vec<ExecutionCommandBatch>,
     real_network_calls: usize,
+    outcome: DispatchOutcome,
+}
+
+impl Default for FakeExecutionPort {
+    fn default() -> Self {
+        Self {
+            batches: Vec::new(),
+            real_network_calls: 0,
+            outcome: DispatchOutcome::AcceptedForDispatch,
+        }
+    }
 }
 
 impl ExecutionPort for FakeExecutionPort {
-    type Error = FakePortError;
-
-    fn dispatch(&mut self, batch: &ExecutionCommandBatch) -> Result<(), Self::Error> {
+    fn dispatch(&mut self, batch: &ExecutionCommandBatch) -> DispatchOutcome {
         self.batches.push(batch.clone());
-        Ok(())
+        self.outcome.clone()
     }
 }
 
@@ -640,6 +640,28 @@ fn handle(event: ExecutionEvent, prepared: &mut PreparedBasket) -> Result<(), Bo
     Ok(())
 }
 
+fn complete_with_full_fills(prepared: &mut PreparedBasket) -> TestResult {
+    handle(fill(prepared, 0, "completed-long-fill", 10, 3)?, prepared)?;
+    handle(fill(prepared, 1, "completed-short-fill", 10, 4)?, prepared)?;
+    assert_eq!(prepared.coordinator.state(), BasketState::Complete);
+    Ok(())
+}
+
+fn account_inventory_with_actual(actual: Notional) -> Result<EffectiveInventory, Box<dyn Error>> {
+    let (_, pair_id, symbol, long_venue, short_venue, _, _) = ids()?;
+    Ok(EffectiveInventory::new(
+        symbol,
+        pair_id,
+        vec![OrientedExposure::new(
+            long_venue,
+            short_venue,
+            actual,
+            Notional::new(Decimal::ZERO)?,
+            Notional::new(Decimal::ZERO)?,
+        )?],
+    )?)
+}
+
 #[test]
 fn normal_two_leg_accepted_full_fill_reaches_complete() -> TestResult {
     let mut prepared = prepare_increase()?;
@@ -657,6 +679,113 @@ fn normal_two_leg_accepted_full_fill_reaches_complete() -> TestResult {
             ..
         }
     )));
+    Ok(())
+}
+
+#[test]
+fn completed_filled_basket_remains_visible_as_effective_exposure() -> TestResult {
+    let mut prepared = prepare_increase()?;
+    complete_with_full_fills(&mut prepared)?;
+    let (_, pair_id, symbol, long_venue, short_venue, _, _) = ids()?;
+    let reservation = prepared
+        .reservations
+        .active(&pair_id)
+        .ok_or("completed filled reservation missing")?;
+    assert!(matches!(
+        reservation.state,
+        PairReservationState::FilledAwaitingInventorySync { .. }
+    ));
+    let filled = reservation.notional_per_leg;
+    let empty = EffectiveInventory::new(symbol, pair_id, Vec::new())?;
+    let effective = prepared
+        .reservations
+        .effective_inventory_with_reservations(&empty)?;
+    let projected = effective.project(&long_venue, &short_venue)?;
+    assert_eq!(projected.reserved_notional_per_leg.value(), Decimal::ZERO);
+    assert_eq!(projected.pending_notional_per_leg, filled);
+    assert_eq!(projected.total_notional_per_leg, filled);
+    Ok(())
+}
+
+#[test]
+fn second_increase_is_blocked_after_complete_before_inventory_sync() -> TestResult {
+    let mut first = prepare_increase()?;
+    complete_with_full_fills(&mut first)?;
+    let mut second =
+        ExecutionBasketCoordinator::new(normal_intent(ExecutionIntentPurpose::IncreaseRisk)?, 2)?;
+    let mut second_journal = InMemoryExecutionJournal::default();
+    assert_eq!(
+        prepare_increase_at(
+            &mut second,
+            PREFLIGHT_AT,
+            Decimal::from(100),
+            Decimal::from(101),
+            &mut second_journal,
+            &mut first.reservations,
+        ),
+        Err(CoordinatorError::PairIncreaseAlreadyReserved)
+    );
+    assert!(second.children().is_empty());
+    Ok(())
+}
+
+#[test]
+fn authoritative_inventory_sync_releases_converted_reservation() -> TestResult {
+    let mut prepared = prepare_increase()?;
+    complete_with_full_fills(&mut prepared)?;
+    let (_, pair_id, symbol, long_venue, short_venue, _, _) = ids()?;
+    let filled = prepared
+        .reservations
+        .active(&pair_id)
+        .ok_or("converted reservation missing")?
+        .notional_per_leg;
+    let account = account_inventory_with_actual(filled)?;
+    let evidence = AuthoritativeInventorySyncEvidence {
+        evidence_id: EvidenceId::try_from("account-snapshot-includes-p6-fills")?,
+        pair_id: pair_id.clone(),
+        intent_id: prepared.coordinator.intent().intent_id().clone(),
+        symbol,
+        long_venue,
+        short_venue,
+        observed_at: UnixNanos(PREFLIGHT_AT.0 + 20_000_000),
+    };
+    prepared.reservations.confirm_authoritative_inventory_sync(
+        &evidence,
+        &account,
+        &mut prepared.journal,
+    )?;
+    assert!(prepared.reservations.active(&pair_id).is_none());
+    assert!(matches!(
+        prepared.journal.records().last(),
+        Some(ExecutionJournalRecord::ReservationReleased {
+            reason: ReservationReleaseReason::AuthoritativeInventorySync,
+            inventory_sync_evidence_id: Some(id),
+            ..
+        }) if id == &evidence.evidence_id
+    ));
+    Ok(())
+}
+
+#[test]
+fn converted_exposure_is_not_double_counted_once_inventory_state_already_includes_it() -> TestResult
+{
+    let mut prepared = prepare_increase()?;
+    complete_with_full_fills(&mut prepared)?;
+    let (_, pair_id, _, long_venue, short_venue, _, _) = ids()?;
+    let filled = prepared
+        .reservations
+        .active(&pair_id)
+        .ok_or("converted reservation missing")?
+        .notional_per_leg;
+    let account = account_inventory_with_actual(filled)?;
+    let effective = prepared
+        .reservations
+        .effective_inventory_with_reservations(&account)?;
+    let projected = effective.project(&long_venue, &short_venue)?;
+    assert_eq!(projected.actual_notional_per_leg, filled);
+    assert_eq!(projected.pending_notional_per_leg.value(), Decimal::ZERO);
+    assert_eq!(projected.total_notional_per_leg, filled);
+    assert!(prepared.reservations.active(&pair_id).is_some());
     Ok(())
 }
 
@@ -741,7 +870,7 @@ fn delayed_acknowledgement_preserves_submitting_until_received() -> TestResult {
 }
 
 #[test]
-fn acknowledgement_timeout_enters_unknown_without_blind_resend() -> TestResult {
+fn newer_timeout_still_enters_unknown_when_outcome_genuinely_unresolved() -> TestResult {
     let mut prepared = prepare_increase()?;
     let first_id = child_id(&prepared, 0);
     handle(
@@ -761,6 +890,73 @@ fn acknowledgement_timeout_enters_unknown_without_blind_resend() -> TestResult {
         Err(CoordinatorError::InvalidBasketState)
     ));
     assert_eq!(prepared.coordinator.children()[0].client_order_id, first_id);
+    Ok(())
+}
+
+#[test]
+fn stale_timeout_after_newer_ack_does_not_enter_unknown() -> TestResult {
+    let mut prepared = prepare_increase()?;
+    handle(ack(child_id(&prepared, 0), 20)?, &mut prepared)?;
+    handle(
+        ExecutionEvent::AcknowledgementTimeout {
+            client_order_id: child_id(&prepared, 0),
+            observed_at: UnixNanos(PREFLIGHT_AT.0 + 30_000_000),
+        },
+        &mut prepared,
+    )?;
+    assert_eq!(
+        prepared.coordinator.children()[0].state,
+        ChildOrderState::AcceptedOpen
+    );
+    assert_ne!(prepared.coordinator.state(), BasketState::Unknown);
+    assert!(matches!(
+        prepared.journal.records().last(),
+        Some(ExecutionJournalRecord::EventApplied {
+            duplicate: true,
+            ..
+        })
+    ));
+    Ok(())
+}
+
+#[test]
+fn stale_timeout_after_newer_partial_fill_does_not_enter_unknown() -> TestResult {
+    let mut prepared = prepare_increase()?;
+    handle(fill(&prepared, 0, "newer-partial", 5, 20)?, &mut prepared)?;
+    handle(
+        ExecutionEvent::AcknowledgementTimeout {
+            client_order_id: child_id(&prepared, 0),
+            observed_at: UnixNanos(PREFLIGHT_AT.0 + 10_000_000),
+        },
+        &mut prepared,
+    )?;
+    assert_eq!(
+        prepared.coordinator.children()[0].state,
+        ChildOrderState::PartiallyFilled
+    );
+    assert_ne!(prepared.coordinator.state(), BasketState::Unknown);
+    Ok(())
+}
+
+#[test]
+fn same_event_sequence_reordered_by_stale_timers_yields_equivalent_authoritative_state()
+-> TestResult {
+    let mut timeout_then_ack = prepare_increase()?;
+    let mut ack_then_timeout = prepare_increase()?;
+    let stale_timeout = ExecutionEvent::AcknowledgementTimeout {
+        client_order_id: child_id(&timeout_then_ack, 0),
+        observed_at: UnixNanos(PREFLIGHT_AT.0 + 10_000_000),
+    };
+    let newer_ack = ack(child_id(&timeout_then_ack, 0), 20)?;
+    handle(stale_timeout.clone(), &mut timeout_then_ack)?;
+    handle(newer_ack.clone(), &mut timeout_then_ack)?;
+    handle(newer_ack, &mut ack_then_timeout)?;
+    handle(stale_timeout, &mut ack_then_timeout)?;
+    assert_eq!(
+        timeout_then_ack.coordinator.snapshot()?,
+        ack_then_timeout.coordinator.snapshot()?
+    );
+    assert_ne!(timeout_then_ack.coordinator.state(), BasketState::Unknown);
     Ok(())
 }
 
@@ -875,9 +1071,48 @@ fn residual_is_calculated_from_actual_fills_not_requested_quantity() -> TestResu
 fn no_real_order_or_network_path_is_invoked_by_tests() -> TestResult {
     let prepared = prepare_increase()?;
     let mut port = FakeExecutionPort::default();
-    port.dispatch(&prepared.batch)?;
+    assert_eq!(
+        port.dispatch(&prepared.batch),
+        DispatchOutcome::AcceptedForDispatch
+    );
     assert_eq!(port.batches, vec![prepared.batch]);
     assert_eq!(port.real_network_calls, 0);
+    Ok(())
+}
+
+#[test]
+fn ambiguous_dispatch_failure_cannot_cause_blind_resend() -> TestResult {
+    let mut prepared = prepare_increase()?;
+    let mut port = FakeExecutionPort {
+        outcome: DispatchOutcome::Ambiguous {
+            reason: "transport lost the batch result after write began".to_owned(),
+        },
+        ..FakeExecutionPort::default()
+    };
+    let outcome = port.dispatch(&prepared.batch);
+    prepared.coordinator.handle_dispatch_outcome(
+        outcome,
+        UnixNanos(PREFLIGHT_AT.0 + 30_000_000),
+        &mut prepared.journal,
+    )?;
+    assert_eq!(prepared.coordinator.state(), BasketState::Unknown);
+    assert_eq!(prepared.coordinator.children().len(), 2);
+    assert_eq!(port.batches.len(), 1);
+    assert!(matches!(
+        prepared.coordinator.prepare_residual_recovery(
+            UnixNanos(PREFLIGHT_AT.0 + 40_000_000),
+            &mut prepared.journal,
+        ),
+        Err(CoordinatorError::InvalidBasketState)
+    ));
+    assert_eq!(port.batches.len(), 1);
+    assert!(prepared.journal.records().iter().any(|record| matches!(
+        record,
+        ExecutionJournalRecord::DispatchObserved {
+            outcome: DispatchOutcome::Ambiguous { .. },
+            ..
+        }
+    )));
     Ok(())
 }
 
@@ -969,6 +1204,32 @@ fn cancel_unknown_forces_unknown_basket() -> TestResult {
 }
 
 #[test]
+fn stale_cancel_unknown_after_newer_cancel_resolution_does_not_regress() -> TestResult {
+    let mut prepared = prepare_increase()?;
+    prepared
+        .coordinator
+        .prepare_abort_cancels(UnixNanos(PREFLIGHT_AT.0 + 2_000_000), &mut prepared.journal)?;
+    handle(cancel_confirmed(child_id(&prepared, 0), 10), &mut prepared)?;
+    handle(
+        ExecutionEvent::CancelUnknown {
+            client_order_id: child_id(&prepared, 0),
+            observed_at: UnixNanos(PREFLIGHT_AT.0 + 5_000_000),
+        },
+        &mut prepared,
+    )?;
+    assert_eq!(
+        prepared.coordinator.children()[0].cancel_state,
+        CancelState::Confirmed
+    );
+    assert_eq!(
+        prepared.coordinator.children()[0].state,
+        ChildOrderState::Canceled
+    );
+    assert_ne!(prepared.coordinator.state(), BasketState::Unknown);
+    Ok(())
+}
+
+#[test]
 fn fill_after_confirmed_cancel_remains_terminal_and_updates_residual() -> TestResult {
     let mut prepared = prepare_increase()?;
     prepared
@@ -986,7 +1247,34 @@ fn fill_after_confirmed_cancel_remains_terminal_and_updates_residual() -> TestRe
 }
 
 #[test]
-fn late_fill_reopens_completed_cancel_basket_and_reacquires_reservation() -> TestResult {
+fn zero_fill_complete_releases_reservation() -> TestResult {
+    let mut prepared = prepare_increase()?;
+    prepared
+        .coordinator
+        .prepare_abort_cancels(UnixNanos(PREFLIGHT_AT.0 + 2_000_000), &mut prepared.journal)?;
+    handle(cancel_confirmed(child_id(&prepared, 0), 3), &mut prepared)?;
+    handle(cancel_confirmed(child_id(&prepared, 1), 5), &mut prepared)?;
+    assert_eq!(prepared.coordinator.state(), BasketState::Complete);
+    assert!(
+        prepared
+            .reservations
+            .active(prepared.coordinator.intent().pair_id())
+            .is_none()
+    );
+    assert!(prepared.journal.records().iter().any(|record| matches!(
+        record,
+        ExecutionJournalRecord::ReservationReleased {
+            reason: ReservationReleaseReason::ZeroFilledExposure,
+            inventory_sync_evidence_id: None,
+            ..
+        }
+    )));
+    Ok(())
+}
+
+#[test]
+fn late_fill_after_zero_fill_completion_reacquires_or_creates_pending_exposure_safely() -> TestResult
+{
     let mut prepared = prepare_increase()?;
     prepared
         .coordinator
@@ -1010,7 +1298,20 @@ fn late_fill_reopens_completed_cancel_basket_and_reacquires_reservation() -> Tes
             .active(prepared.coordinator.intent().pair_id())
             .is_some_and(|reservation| {
                 reservation.intent_id == *prepared.coordinator.intent().intent_id()
+                    && reservation.state == PairReservationState::Active
             })
+    );
+    let (_, pair_id, symbol, long_venue, short_venue, _, _) = ids()?;
+    let empty = EffectiveInventory::new(symbol, pair_id, Vec::new())?;
+    let effective = prepared
+        .reservations
+        .effective_inventory_with_reservations(&empty)?;
+    assert!(
+        effective
+            .project(&long_venue, &short_venue)?
+            .total_notional_per_leg
+            .value()
+            > Decimal::ZERO
     );
     Ok(())
 }

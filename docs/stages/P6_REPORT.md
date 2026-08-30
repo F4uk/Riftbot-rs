@@ -15,10 +15,14 @@ Status: implemented on `codex/p6-execution-basket`; stopped at GPT Gate 6 before
 ## Safety boundary
 
 P6 implements deterministic execution safety only. The runtime boundary is a pure
-`ExecutionPort` trait accepting already-journaled command batches. There is no real port, private
-venue connection, credential lookup, custom REST/WebSocket client, Nautilus order submission,
-tiny-live mode, or unrestricted market-order fallback. The complete P6 lifecycle and fault matrix
-uses only `FakeExecutionPort`, `InMemoryExecutionJournal`, and caller-supplied logical time.
+`ExecutionPort` trait accepting already-journaled command batches. Its typed `DispatchOutcome`
+distinguishes `AcceptedForDispatch`, batch-wide `DefinitelyNotSent`, and `Ambiguous`. Only the
+second permits a future bridge to assert that no command reached an external execution boundary;
+all unclassified transport failures are ambiguous, enter `Unknown`, and cannot trigger a blind
+resend. There is no real port, private venue connection, credential lookup, custom REST/WebSocket
+client, Nautilus order submission, tiny-live mode, or unrestricted market-order fallback. The
+complete P6 lifecycle and fault matrix uses only `FakeExecutionPort`,
+`InMemoryExecutionJournal`, and caller-supplied logical time.
 
 The existing `execution::nautilus_bridge` remains empty. P6 therefore cannot produce a network
 side effect without a future, explicitly supplied runtime implementation. P7 startup/account
@@ -90,7 +94,8 @@ commands together. It never waits for leg A acknowledgement before deciding whet
 The append-only `ExecutionJournal` boundary retains:
 
 - decision, intent, purpose, P5 context, and preflight evidence;
-- reservation acquisition/release;
+- reservation acquisition, post-fill conversion, and evidence-backed release;
+- typed dispatch outcomes, including ambiguous partial/non-atomic handoff;
 - stable child and command identity;
 - submissions, acknowledgements, rejections, fills, cancels, and timeouts;
 - every state transition and residual update;
@@ -112,11 +117,14 @@ explicit journaled transition immediately before `Complete` when the terminal pr
 
 `Complete` requires every relevant initial/recovery child to be terminal, no unknown child or
 cancel state, actual-fill residual within tolerance, and no outstanding child capable of changing
-residual. Timeout is ambiguity, not rejection: it produces `Unknown`, can transition to
-`Reconciling`, never creates a replacement, and cannot reach `Complete` without authoritative
-events. Snapshot serde validates state-specific child counts, initial/recovery generations,
-terminal facts, fill arithmetic, residual recomputation, recovery-attempt count, and restrictive
-authority for `FailedSafe`.
+residual. Timeout is ambiguity, not rejection: a genuinely unresolved, newer timeout produces
+`Unknown`, can transition to `Reconciling`, never creates a replacement, and cannot reach
+`Complete` without authoritative events. Timer/ambiguity observations are monotonic: a stale
+acknowledgement timeout cannot overwrite a newer ack or fill, and stale cancel ambiguity cannot
+overwrite a newer cancel confirmation/rejection. Authoritative out-of-order ack/fill events remain
+accepted and fills still update cumulative exposure. Snapshot serde validates state-specific child
+counts, initial/recovery generations, terminal facts, fill arithmetic, residual recomputation,
+recovery-attempt count, and restrictive authority for `FailedSafe`.
 
 ## Actual fills, late events, and recovery
 
@@ -130,7 +138,8 @@ conflicting duplicate IDs, regressive cumulative quantity/notional, incoherent a
 arithmetic, quantity above the child bound, or a fill outside its price guard enters `FailedSafe`.
 Out-of-order acknowledgement after fill preserves the fill state. Fills after cancel request,
 confirmed cancel, timeout, or `Unknown` still update residual. A late fill that reopens a previously
-completed canceled increase basket reacquires its reservation; it cannot silently free the pair.
+completed zero-fill canceled increase basket reacquires its reservation and restores effective
+exposure visibility; it cannot silently free the pair.
 
 When residual exceeds tolerance, recovery waits until both initial child states are authoritative
 and every prior recovery generation is terminal. It then chooses an actually filled source side,
@@ -152,12 +161,25 @@ it does not perform P7 reconciliation or an unbounded retry loop.
 Before an increase batch is returned, the coordinator acquires the sole single-process reservation
 for that pair. A second increase is rejected while it exists. The reservation book can overlay its
 matched per-leg amount on `EffectiveInventory`, so the next P4 tick sees it as reserved exposure
-without changing P4 mathematics. Only authoritative completion releases or converts it. Unknown,
-reconciling, imbalanced, hedging, aborting, and failed-safe baskets retain the reservation.
+without changing P4 mathematics. Unknown, reconciling, imbalanced, hedging, aborting, and
+failed-safe baskets retain the reservation.
+
+Completion is not position truth. A zero-filled terminal basket releases ownership, but a completed
+increase with remaining matched fills converts from `Active` to
+`FilledAwaitingInventorySync`. The converted amount remains in the reservation book, blocks a
+second increase, and is overlaid as pending exposure until actual account/cache inventory includes
+it. The overlay adds only the missing amount relative to the baseline actual exposure frozen at
+reservation acquisition, so an already-updated account view is not double-counted.
+
+P6 exposes `AuthoritativeInventorySyncEvidence` and a validating release method as the ownership
+boundary P7 may later consume. Release requires matching pair/intent/symbol/route identity, a
+non-regressive logical observation time, and account `actual_notional_per_leg` at least equal to the
+frozen baseline plus converted fills. The proof and release are journaled atomically. P6 does not
+obtain venue/account truth or implement reconciliation.
 
 ## Deterministic fault-injection evidence
 
-`tests/p6_execution.rs` contains 48 deterministic P6 tests. Key evidence is summarized below.
+`tests/p6_execution.rs` contains 58 deterministic P6 tests. Key evidence is summarized below.
 
 | Fault or invariant | Proven result |
 |---|---|
@@ -167,7 +189,8 @@ reconciling, imbalanced, hedging, aborting, and failed-safe baskets retain the r
 | reject after opposite fill | basket becomes `Imbalanced`, never pretends atomic failure |
 | one partial/one full; both partial | actual signed residual and `Imbalanced`/`Partial` are deterministic |
 | delayed ack; fill before ack | no sequencing assumption; fill state is preserved |
-| ack timeout | `Unknown`, no blind resend, stable child identity |
+| ack/cancel ambiguity ordering | stale timers cannot regress newer ack/fill/cancel truth; unresolved newer timeout enters `Unknown` |
+| ambiguous dispatch failure | typed `Ambiguous`, both unresolved children become `Unknown`, no resend/generation |
 | `Unknown -> Reconciling` | only authoritative ack/fill/reject resolves uncertainty |
 | duplicate/conflicting/regressive fills | identical is idempotent; conflicting/regressive facts fail safe |
 | cancel requested/rejected/unknown/confirmed | every cancel state remains distinct and audited |
@@ -181,7 +204,9 @@ reconciling, imbalanced, hedging, aborting, and failed-safe baskets retain the r
 | restrictive P5 state | cannot deserialize or construct an increase |
 | reduction / P4 reversal | works without entry edge and preserves source P4 action |
 | emergency flatten | cannot cross zero; actual fill starts from known signed exposure |
-| pair concurrency | second increase rejected and reservation visible to `EffectiveInventory` |
+| pair ownership after completion | filled exposure converts to pending visibility and blocks a second increase until typed account proof |
+| inventory incorporation | converted overlay does not double-count updated actual state; authoritative proof releases ownership |
+| zero-fill completion / late fill | zero fills release; a later fill reacquires ownership and effective exposure visibility |
 | journal failure | no unjournaled command identity or reservation escapes |
 | deterministic replay | same command/event sequence yields identical state, journal, and reservation |
 | serde mutation | impossible intent and basket states are rejected |
@@ -190,21 +215,21 @@ reconciling, imbalanced, hedging, aborting, and failed-safe baskets retain the r
 ## Verification
 
 The required local Gate 6 commands pass. `cargo test --locked --all-targets --all-features` runs
-193 tests with 0 failures:
+203 tests with 0 failures:
 
 - 96 library tests present at the Gate 5 baseline, of which four P0 execution-skeleton tests were
   replaced by P6 integration coverage, leaving 92 library tests;
 - 11 P2 recording/replay integration tests;
 - 6 P3 measurement integration tests;
 - 36 P5 hard-risk integration tests; and
-- 48 P6 deterministic execution/fault-injection integration tests.
+- 58 P6 deterministic execution/fault-injection integration tests.
 
 | Command | Result |
 |---|---|
 | `python scripts/ci_policy.py all` | pass |
 | `cargo fmt --check` | pass |
 | `cargo clippy --locked --all-targets --all-features -- -D warnings` | pass |
-| `cargo test --locked --all-targets --all-features` | 193 passed; 0 failed |
+| `cargo test --locked --all-targets --all-features` | 203 passed; 0 failed |
 | `cargo check --locked --features nautilus-adapters` | pass |
 
 ## Scope audit
