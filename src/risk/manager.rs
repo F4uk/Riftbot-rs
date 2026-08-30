@@ -166,12 +166,16 @@ impl RiskManager {
 
         let mut exposure_base = evaluate_exposure(
             input.inventory,
-            action,
             route,
             input.exposure,
             &mut reasons,
             &mut effective_decision,
         );
+        let current_exposure_valid = if let Some(base) = &exposure_base {
+            check_current_limits(base, &self.limits, &mut reasons, &mut effective_decision)
+        } else {
+            false
+        };
         if action == RiskInputAction::IncreaseRisk
             && let Some(base) = &exposure_base
         {
@@ -187,6 +191,7 @@ impl RiskManager {
         let can_authorize_reduction = action.is_reduction()
             && p4_valid
             && exposure_base.is_some()
+            && current_exposure_valid
             && session_arithmetic_ok
             && !matches!(
                 effective_decision,
@@ -195,6 +200,7 @@ impl RiskManager {
         let can_authorize_increase = action == RiskInputAction::IncreaseRisk
             && p4_valid
             && exposure_base.is_some()
+            && current_exposure_valid
             && session_arithmetic_ok
             && effective_decision == RiskDecision::Approve
             && candidate_change.value() > Decimal::ZERO;
@@ -390,20 +396,17 @@ fn proposal_route(
             }
         });
     }
-    if action.is_reduction() {
-        return inventory.effective_actual.as_ref().and_then(|actual| {
-            if let TargetDirection::LongShort {
-                long_venue,
-                short_venue,
-            } = &actual.direction
-            {
-                Some((long_venue, short_venue))
-            } else {
-                None
-            }
-        });
-    }
-    None
+    inventory.effective_actual.as_ref().and_then(|actual| {
+        if let TargetDirection::LongShort {
+            long_venue,
+            short_venue,
+        } = &actual.direction
+        {
+            Some((long_venue, short_venue))
+        } else {
+            None
+        }
+    })
 }
 
 fn check_measurement_recency(
@@ -724,22 +727,18 @@ impl ExposureBase {
 
 fn evaluate_exposure(
     inventory: &InventoryDecision,
-    action: RiskInputAction,
     route: Option<(&VenueId, &VenueId)>,
     exposure: Option<&RiskExposureSnapshot>,
     reasons: &mut Vec<RiskReasonCode>,
     decision: &mut RiskDecision,
 ) -> Option<ExposureBase> {
-    if action != RiskInputAction::IncreaseRisk && !action.is_reduction() {
-        return None;
-    }
     let Some(exposure) = exposure else {
         push_once(reasons, RiskReasonCode::ExposureMissing);
         apply_decision(decision, RiskDecision::Deny);
         return None;
     };
     let Some((long_venue, short_venue)) = route else {
-        push_once(reasons, RiskReasonCode::P4ProposalInvalid);
+        push_once(reasons, RiskReasonCode::ExposureIdentityMismatch);
         apply_decision(decision, RiskDecision::Deny);
         return None;
     };
@@ -804,6 +803,37 @@ fn evaluate_exposure(
     })
 }
 
+fn check_current_limits(
+    base: &ExposureBase,
+    limits: &RiskLimitsConfig,
+    reasons: &mut Vec<RiskReasonCode>,
+    decision: &mut RiskDecision,
+) -> bool {
+    if base.pair_current.value() > limits.max_pair_notional.value() {
+        push_once(reasons, RiskReasonCode::PairLimitExceeded);
+        apply_decision(decision, RiskDecision::ReduceOnly);
+    }
+    if base.long_current.value() > limits.max_venue_notional.value()
+        || base.short_current.value() > limits.max_venue_notional.value()
+    {
+        push_once(reasons, RiskReasonCode::VenueLimitExceeded);
+        apply_decision(decision, RiskDecision::ReduceOnly);
+    }
+    match absolute(base.global_delta_current.value()) {
+        Ok(delta) if delta > limits.max_global_delta.value() => {
+            push_once(reasons, RiskReasonCode::GlobalDeltaLimitExceeded);
+            apply_decision(decision, RiskDecision::FlattenRequired);
+        }
+        Err(RiskArithmeticError::Overflow) => {
+            push_once(reasons, RiskReasonCode::ArithmeticFailure);
+            apply_decision(decision, RiskDecision::Deny);
+            return false;
+        }
+        _ => {}
+    }
+    true
+}
+
 fn check_increase_limits(
     base: &ExposureBase,
     candidate: Notional,
@@ -824,15 +854,6 @@ fn check_increase_limits(
         || short.value() > limits.max_venue_notional.value()
     {
         push_once(reasons, RiskReasonCode::VenueLimitExceeded);
-    }
-    match absolute(base.global_delta_current.value()) {
-        Ok(delta) if delta > limits.max_global_delta.value() => {
-            push_once(reasons, RiskReasonCode::GlobalDeltaLimitExceeded);
-        }
-        Err(RiskArithmeticError::Overflow) => {
-            push_once(reasons, RiskReasonCode::ArithmeticFailure);
-        }
-        _ => {}
     }
     if reasons.iter().any(|reason| {
         matches!(

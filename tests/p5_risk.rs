@@ -46,6 +46,15 @@ impl Fixture {
         Self::from_inventory(config, inventory)
     }
 
+    fn no_change() -> Result<Self, Box<dyn Error>> {
+        let config = parse_toml(EXAMPLE)?;
+        let mut inventory = reduction_inventory()?;
+        inventory.action = InventoryAction::NoChange;
+        inventory.required_change_notional_per_leg = Money::new(Decimal::ZERO);
+        inventory.proposed_change_notional_per_leg = Notional::new(Decimal::ZERO)?;
+        Self::from_inventory(config, inventory)
+    }
+
     fn from_inventory(
         config: AppConfig,
         inventory: InventoryDecision,
@@ -586,16 +595,169 @@ fn reserved_and_pending_exposure_are_counted_in_projection() -> TestResult {
 }
 
 #[test]
-fn global_delta_breach_is_denied() -> TestResult {
+fn global_delta_breach_requires_flatten() -> TestResult {
     let mut fixture = Fixture::increase()?;
     let exposure = fixture.exposure.as_mut().ok_or("missing exposure")?;
     exposure.global_delta.actual = Delta::new(Decimal::from(26));
     let assessment = fixture.assess()?;
-    assert_eq!(assessment.decision(), RiskDecision::Deny);
+    assert_eq!(assessment.decision(), RiskDecision::FlattenRequired);
     assert!(has_reason(
         &assessment,
         RiskReasonCode::GlobalDeltaLimitExceeded
     ));
+    Ok(())
+}
+
+#[test]
+fn no_change_with_current_pair_breach_is_restrictive() -> TestResult {
+    let mut fixture = Fixture::no_change()?;
+    fixture.config.risk.max_pair_notional = Notional::new(Decimal::from(150))?;
+    let assessment = fixture.assess()?;
+    assert_eq!(assessment.decision(), RiskDecision::ReduceOnly);
+    assert_eq!(
+        assessment.authorized_change_notional_per_leg().value(),
+        Decimal::ZERO
+    );
+    assert!(has_reason(&assessment, RiskReasonCode::PairLimitExceeded));
+    assert!(!has_reason(&assessment, RiskReasonCode::NoRiskChange));
+    assert!(!has_reason(&assessment, RiskReasonCode::Approved));
+    Ok(())
+}
+
+#[test]
+fn no_change_with_current_venue_breach_is_restrictive() -> TestResult {
+    let mut fixture = Fixture::no_change()?;
+    let exposure = fixture.exposure.as_mut().ok_or("missing exposure")?;
+    exposure.venues[0].exposure = ExposureComponents {
+        actual: Notional::new(Decimal::from(1_001))?,
+        reserved: Notional::new(Decimal::ZERO)?,
+        pending: Notional::new(Decimal::ZERO)?,
+    };
+    let assessment = fixture.assess()?;
+    assert_eq!(assessment.decision(), RiskDecision::ReduceOnly);
+    assert!(has_reason(&assessment, RiskReasonCode::VenueLimitExceeded));
+    assert!(!has_reason(&assessment, RiskReasonCode::NoRiskChange));
+    Ok(())
+}
+
+#[test]
+fn no_change_with_current_global_delta_breach_is_restrictive() -> TestResult {
+    let mut fixture = Fixture::no_change()?;
+    let exposure = fixture.exposure.as_mut().ok_or("missing exposure")?;
+    exposure.global_delta.actual = Delta::new(Decimal::from(26));
+    let assessment = fixture.assess()?;
+    assert_eq!(assessment.decision(), RiskDecision::FlattenRequired);
+    assert!(has_reason(
+        &assessment,
+        RiskReasonCode::GlobalDeltaLimitExceeded
+    ));
+    assert!(!has_reason(&assessment, RiskReasonCode::NoRiskChange));
+    Ok(())
+}
+
+#[test]
+fn reduction_from_pair_breach_is_allowed_but_breach_visible() -> TestResult {
+    let mut fixture = Fixture::reduction()?;
+    fixture.config.risk.max_pair_notional = Notional::new(Decimal::from(150))?;
+    let assessment = fixture.assess()?;
+    assert_eq!(assessment.decision(), RiskDecision::ReduceOnly);
+    assert_eq!(
+        assessment.authorized_change_notional_per_leg().value(),
+        Decimal::from(100)
+    );
+    assert!(has_reason(&assessment, RiskReasonCode::PairLimitExceeded));
+    let audit = assessment.exposure().ok_or("missing reduction audit")?;
+    assert_eq!(
+        audit.pair_current_notional_per_leg.value(),
+        Decimal::from(200)
+    );
+    assert_eq!(
+        audit.pair_authorized_projected_notional_per_leg.value(),
+        Decimal::from(100)
+    );
+    Ok(())
+}
+
+#[test]
+fn reduction_does_not_hide_global_delta_breach() -> TestResult {
+    let mut fixture = Fixture::reduction()?;
+    let exposure = fixture.exposure.as_mut().ok_or("missing exposure")?;
+    exposure.global_delta.actual = Delta::new(Decimal::from(26));
+    let assessment = fixture.assess()?;
+    assert_eq!(assessment.decision(), RiskDecision::FlattenRequired);
+    assert_eq!(
+        assessment.authorized_change_notional_per_leg().value(),
+        Decimal::from(100)
+    );
+    assert!(has_reason(
+        &assessment,
+        RiskReasonCode::GlobalDeltaLimitExceeded
+    ));
+    Ok(())
+}
+
+#[test]
+fn exactly_at_current_limit_is_not_a_breach() -> TestResult {
+    let mut fixture = Fixture::no_change()?;
+    fixture.config.risk.max_pair_notional = Notional::new(Decimal::from(200))?;
+    fixture.config.risk.max_venue_notional = Notional::new(Decimal::from(200))?;
+    let exposure = fixture.exposure.as_mut().ok_or("missing exposure")?;
+    exposure.global_delta.actual = Delta::new(Decimal::from(25));
+    let assessment = fixture.assess()?;
+    assert_eq!(assessment.decision(), RiskDecision::Approve);
+    assert!(has_reason(&assessment, RiskReasonCode::NoRiskChange));
+    assert!(!has_reason(&assessment, RiskReasonCode::PairLimitExceeded));
+    assert!(!has_reason(&assessment, RiskReasonCode::VenueLimitExceeded));
+    assert!(!has_reason(
+        &assessment,
+        RiskReasonCode::GlobalDeltaLimitExceeded
+    ));
+    Ok(())
+}
+
+#[test]
+fn current_exposure_arithmetic_failure_fails_closed() -> TestResult {
+    let mut fixture = Fixture::no_change()?;
+    let exposure = fixture.exposure.as_mut().ok_or("missing exposure")?;
+    exposure.pair_per_leg = ExposureComponents {
+        actual: Notional::new(Decimal::MAX)?,
+        reserved: Notional::new(Decimal::ONE)?,
+        pending: Notional::new(Decimal::ZERO)?,
+    };
+    let assessment = fixture.assess()?;
+    assert_eq!(assessment.decision(), RiskDecision::Deny);
+    assert_eq!(
+        assessment.authorized_change_notional_per_leg().value(),
+        Decimal::ZERO
+    );
+    assert!(has_reason(&assessment, RiskReasonCode::ArithmeticFailure));
+    assert!(!has_reason(&assessment, RiskReasonCode::NoRiskChange));
+    Ok(())
+}
+
+#[test]
+fn no_change_with_current_exposure_identity_failure_fails_closed() -> TestResult {
+    let mut fixture = Fixture::no_change()?;
+    let exposure = fixture.exposure.as_mut().ok_or("missing exposure")?;
+    exposure.symbol = Symbol::try_from("OTHER")?;
+    let assessment = fixture.assess()?;
+    assert_eq!(assessment.decision(), RiskDecision::Deny);
+    assert!(has_reason(
+        &assessment,
+        RiskReasonCode::ExposureIdentityMismatch
+    ));
+    assert!(!has_reason(&assessment, RiskReasonCode::NoRiskChange));
+    Ok(())
+}
+
+#[test]
+fn no_change_with_missing_current_exposure_fails_closed() -> TestResult {
+    let mut fixture = Fixture::no_change()?;
+    fixture.exposure = None;
+    let assessment = fixture.assess()?;
+    assert_eq!(assessment.decision(), RiskDecision::Deny);
+    assert!(has_reason(&assessment, RiskReasonCode::ExposureMissing));
+    assert!(!has_reason(&assessment, RiskReasonCode::NoRiskChange));
     Ok(())
 }
 

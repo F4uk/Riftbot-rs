@@ -1,6 +1,6 @@
 # P5 Deterministic Hard-Risk Report
 
-Status: implemented on `codex/p5-risk`; stopped for GPT Gate 5
+Status: Gate 5 hard-risk fixes implemented on `codex/p5-risk`; stopped before P6
 
 ## Green base and implementation commits
 
@@ -11,8 +11,9 @@ Status: implemented on `codex/p5-risk`; stopped for GPT Gate 5
 - Frozen deterministic P5 policy/config: `7265c2a`
 - Hard-risk authorization and fault matrix: `619f47b`
 - Risk-audit cross-field serde hardening: `f2f52ba`
-- Final P5 evidence commit: the commit containing this report; SHA is reported after push
-- Hosted CI for the final P5 branch: required before Gate 5 handoff and reported with the final SHA
+- Initial Gate 5 review package: `c566d58`
+- Gate 5 hard-risk fix commit: the commit containing this report; SHA is reported after push
+- Hosted CI for the fixed P5 branch: required before Gate 5 re-review and reported with the final SHA
 
 ## Authority and stage boundary
 
@@ -77,15 +78,26 @@ P4 change/target notional is matched notional **per leg**. P5 therefore evaluate
 - `max_global_delta` against the absolute effective signed USD delta; and
 - `max_session_loss` against loss derived from explicit signed session PnL.
 
-Actual, reserved, and pending components use checked fixed-decimal addition. The candidate change is
-projected onto the pair and both venues before authorization. A matched two-leg proposal contributes
-zero modeled global delta, but existing actual/reserved/pending global delta is still checked. Thus
-delta neutrality never waives a venue limit. Equality at venue/pair/global limits is allowed; session
-loss equality triggers the configured restrictive action as required.
+Actual, reserved, and pending components use checked fixed-decimal addition. Current effective pair,
+long-venue, short-venue, and global-delta limits are evaluated independently of the P4 action,
+including `NoChange` and ordinary reductions. Current pair or venue exposure strictly above its
+limit restricts authority to at most `ReduceOnly`. Current absolute global delta strictly above its
+limit restricts authority to at most `FlattenRequired`, because a matched pair change does not
+necessarily repair residual delta. Missing, identity-invalid, or arithmetic-invalid current
+exposure fails closed. Exact equality at a pair, venue, or global-delta limit is not a breach.
+
+For increases, the candidate change is additionally projected onto the pair and both venues before
+authorization. A matched two-leg proposal contributes zero modeled global delta, but existing
+actual/reserved/pending global delta is still checked. Thus delta neutrality never waives a venue
+limit. Session-loss equality continues to trigger the configured restrictive action as required.
 
 Each assessment preserves current, candidate-projected, and authorized-projected exposure. A denied
 increase shows the breached candidate projection while its authorized projection remains current.
-Arithmetic overflow produces an explicit fail-closed reason and zero authorization.
+A valid reduction from a pair/venue breach may retain nonzero authorization when its audited
+projection moves exposure toward safety, while the breach reason and restrictive authority remain
+visible. A reduction does not clear or hide a global-delta breach; P5 reports
+`FlattenRequired` but does not invent or execute a residual hedge. Arithmetic overflow produces an
+explicit fail-closed reason and zero authorization.
 
 ## Health and operational facts
 
@@ -103,7 +115,7 @@ system:
 
 Missing, duplicated, unknown, stale, degraded, or unhealthy required facts deny an increase.
 Reductions do not require positive/fresh entry economics or healthy market-data evidence, while
-exposure identity remains required to prove the action moves toward lower risk.
+current exposure and its identity remain required to prove the action moves toward lower risk.
 
 ## Regime, kill state, and session loss
 
@@ -140,16 +152,20 @@ It never creates an order or venue action.
 
 Construction and deserialization share the same validation. Serde cannot enlarge authorization,
 exceed the recorded P3 cap, omit required approved-increase facts, attach non-zero size to a denied
-decision, or make authorized exposure projections disagree with the authorization amount.
+decision, hide a current hard-limit breach, or make authorized exposure projections disagree with
+the authorization amount. Typed invariants also enforce the frozen regime/kill-state authority
+matrix: an approved increase is impossible under `PauseNew`, `ReduceOnly`, `Flatten`, or `Halt`
+kill state, and under `ReduceOnly` or `Halted` regime. Legitimate reduction authorization remains
+valid under the corresponding restrictive authority.
 
 ## Tests and verification
 
-`cargo test --locked --all-targets --all-features` passes 133 tests and fails 0:
+`cargo test --locked --all-targets --all-features` passes 149 tests and fails 0:
 
-- 89 library tests;
+- 96 library tests;
 - 11 P2 recording/replay integration tests;
 - 6 P3 measurement replay integration tests; and
-- 27 P5 hard-risk integration tests.
+- 36 P5 hard-risk integration tests.
 
 P5 coverage includes all requested happy-path, restrictive-state, freshness, health, hard-limit,
 projection, session-loss, overflow, determinism, serde, transition, logical-time, and no-execution
@@ -157,12 +173,17 @@ invariants. It also tests configured degraded clipping, configured session-loss 
 P3 safe-cap revalidation, candidate-versus-authorized audit projections, and unknown/outstanding
 operation handling.
 
+Gate 5 fix coverage additionally proves restrictive `NoChange` results for current pair, venue, and
+global-delta breaches; visible breach state on reductions; exact current-limit equality; fail-closed
+missing, identity-invalid, and arithmetic-invalid current exposure; all six forbidden
+approved-increase regime/kill-state serde mutations; and valid restrictive-state reduction serde.
+
 | Command | Result |
 |---|---|
 | `python scripts/ci_policy.py all` | pass |
 | `cargo fmt --check` | pass |
 | `cargo clippy --locked --all-targets --all-features -- -D warnings` | pass |
-| `cargo test --locked --all-targets --all-features` | 133 passed; 0 failed |
+| `cargo test --locked --all-targets --all-features` | 149 passed; 0 failed |
 | `cargo check --locked --features nautilus-adapters` | pass |
 
 ## Scope audit and limitations

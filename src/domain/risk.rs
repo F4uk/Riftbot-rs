@@ -380,7 +380,10 @@ fn validate_assessment(params: &RiskAssessmentParams) -> Result<(), RiskDomainEr
             params.limits.session_loss_required_state,
             KillState::Flatten | KillState::Halt
         )
+        || (authorized > Decimal::ZERO && params.exposure.is_none())
+        || !valid_authority_matrix(params)
         || !valid_exposure_audit(params)
+        || !valid_current_limit_authority(params)
     {
         return Err(RiskDomainError::InvalidAssessment);
     }
@@ -431,6 +434,95 @@ fn validate_assessment(params: &RiskAssessmentParams) -> Result<(), RiskDomainEr
         }
     }
     Ok(())
+}
+
+fn valid_authority_matrix(params: &RiskAssessmentParams) -> bool {
+    let regime_authority = match params.regime {
+        Regime::Normal | Regime::Degraded => RiskDecision::Approve,
+        Regime::ReduceOnly => RiskDecision::ReduceOnly,
+        Regime::Halted => RiskDecision::FlattenRequired,
+    };
+    let kill_authority = match (params.input_action.is_reduction(), params.kill_state) {
+        (_, KillState::Ready) | (true, KillState::PauseNew) => RiskDecision::Approve,
+        (false, KillState::PauseNew) => RiskDecision::Deny,
+        (_, KillState::ReduceOnly) => RiskDecision::ReduceOnly,
+        (_, KillState::Flatten) => RiskDecision::FlattenRequired,
+        (_, KillState::Halt) => RiskDecision::HaltRequired,
+    };
+    let required = stricter_decision(regime_authority, kill_authority);
+    decision_severity(params.decision) >= decision_severity(required)
+}
+
+fn valid_current_limit_authority(params: &RiskAssessmentParams) -> bool {
+    let Some(audit) = &params.exposure else {
+        return params.decision != RiskDecision::Approve;
+    };
+    let mut required = RiskDecision::Approve;
+    if audit.pair_current_notional_per_leg.value() > params.limits.max_pair_notional_per_leg.value()
+    {
+        if !params
+            .reason_codes
+            .contains(&RiskReasonCode::PairLimitExceeded)
+        {
+            return false;
+        }
+        required = stricter_decision(required, RiskDecision::ReduceOnly);
+    }
+    if audit.long_current_notional.value() > params.limits.max_venue_notional.value()
+        || audit.short_current_notional.value() > params.limits.max_venue_notional.value()
+    {
+        if !params
+            .reason_codes
+            .contains(&RiskReasonCode::VenueLimitExceeded)
+        {
+            return false;
+        }
+        required = stricter_decision(required, RiskDecision::ReduceOnly);
+    }
+    let Some(global_delta) = checked_absolute(audit.global_delta_current.value()) else {
+        required = stricter_decision(required, RiskDecision::Deny);
+        return params
+            .reason_codes
+            .contains(&RiskReasonCode::ArithmeticFailure)
+            && decision_severity(params.decision) >= decision_severity(required)
+            && params.authorized_change_notional_per_leg.value() == Decimal::ZERO;
+    };
+    if global_delta > params.limits.max_global_delta.value() {
+        if !params
+            .reason_codes
+            .contains(&RiskReasonCode::GlobalDeltaLimitExceeded)
+        {
+            return false;
+        }
+        required = stricter_decision(required, RiskDecision::FlattenRequired);
+    }
+    decision_severity(params.decision) >= decision_severity(required)
+}
+
+const fn stricter_decision(left: RiskDecision, right: RiskDecision) -> RiskDecision {
+    if decision_severity(left) >= decision_severity(right) {
+        left
+    } else {
+        right
+    }
+}
+
+const fn decision_severity(decision: RiskDecision) -> u8 {
+    match decision {
+        RiskDecision::Approve => 0,
+        RiskDecision::Deny => 1,
+        RiskDecision::ReduceOnly => 2,
+        RiskDecision::FlattenRequired => 3,
+        RiskDecision::HaltRequired => 4,
+    }
+}
+
+fn checked_absolute(value: Decimal) -> Option<Decimal> {
+    if value < Decimal::ZERO {
+        Decimal::ZERO.checked_sub(value)
+    } else {
+        Some(value)
+    }
 }
 
 fn valid_exposure_audit(params: &RiskAssessmentParams) -> bool {
@@ -689,6 +781,43 @@ mod tests {
         })
     }
 
+    fn assert_approved_mutation_rejected(
+        field: &str,
+        value: serde_json::Value,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut serialized = serde_json::to_value(approved_params()?)?;
+        serialized[field] = value;
+        assert!(serde_json::from_value::<RiskAssessment>(serialized).is_err());
+        Ok(())
+    }
+
+    fn reduction_params() -> Result<RiskAssessmentParams, Box<dyn Error>> {
+        let mut params = approved_params()?;
+        params.input_action = RiskInputAction::ReduceRisk;
+        params.requested_change_notional_per_leg = Money::new(Decimal::from(-50));
+        params.decision = RiskDecision::ReduceOnly;
+        params.regime = Regime::ReduceOnly;
+        params.kill_state = KillState::ReduceOnly;
+        params.reason_codes = vec![
+            RiskReasonCode::RegimeReduceOnly,
+            RiskReasonCode::KillReduceOnly,
+        ];
+        params.explanation = "regime and kill state permit reduction only".to_owned();
+        params.measurement_age_ms = None;
+        params.measurement_safe_matched_notional_cap = None;
+        let audit = params.exposure.as_mut().ok_or("missing exposure audit")?;
+        audit.pair_current_notional_per_leg = Notional::new(Decimal::from(100))?;
+        audit.pair_candidate_projected_notional_per_leg = Notional::new(Decimal::from(50))?;
+        audit.pair_authorized_projected_notional_per_leg = Notional::new(Decimal::from(50))?;
+        audit.long_current_notional = Notional::new(Decimal::from(100))?;
+        audit.long_candidate_projected_notional = Notional::new(Decimal::from(50))?;
+        audit.long_authorized_projected_notional = Notional::new(Decimal::from(50))?;
+        audit.short_current_notional = Notional::new(Decimal::from(100))?;
+        audit.short_candidate_projected_notional = Notional::new(Decimal::from(50))?;
+        audit.short_authorized_projected_notional = Notional::new(Decimal::from(50))?;
+        Ok(params)
+    }
+
     #[test]
     fn serde_cannot_construct_invalid_risk_authorization() -> Result<(), Box<dyn Error>> {
         let valid = approved_params()?;
@@ -711,6 +840,81 @@ mod tests {
         let mut inconsistent_audit = serde_json::to_value(&valid)?;
         inconsistent_audit["exposure"]["pair_authorized_projected_notional_per_leg"] = json!("49");
         assert!(serde_json::from_value::<RiskAssessment>(inconsistent_audit).is_err());
+
+        let mut hidden_current_breach = serde_json::to_value(&valid)?;
+        hidden_current_breach["exposure"]["pair_current_notional_per_leg"] = json!("1600");
+        hidden_current_breach["exposure"]["pair_candidate_projected_notional_per_leg"] =
+            json!("1650");
+        hidden_current_breach["exposure"]["pair_authorized_projected_notional_per_leg"] =
+            json!("1650");
+        assert!(serde_json::from_value::<RiskAssessment>(hidden_current_breach.clone()).is_err());
+
+        hidden_current_breach["reason_codes"] = json!(["approved", "pair_limit_exceeded"]);
+        assert!(serde_json::from_value::<RiskAssessment>(hidden_current_breach).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn approved_increase_with_pause_new_kill_state_is_rejected_by_serde()
+    -> Result<(), Box<dyn Error>> {
+        assert_approved_mutation_rejected("kill_state", json!("pause_new"))
+    }
+
+    #[test]
+    fn approved_increase_with_reduce_only_kill_state_is_rejected_by_serde()
+    -> Result<(), Box<dyn Error>> {
+        assert_approved_mutation_rejected("kill_state", json!("reduce_only"))
+    }
+
+    #[test]
+    fn approved_increase_with_flatten_kill_state_is_rejected_by_serde() -> Result<(), Box<dyn Error>>
+    {
+        assert_approved_mutation_rejected("kill_state", json!("flatten"))
+    }
+
+    #[test]
+    fn approved_increase_with_halt_kill_state_is_rejected_by_serde() -> Result<(), Box<dyn Error>> {
+        assert_approved_mutation_rejected("kill_state", json!("halt"))
+    }
+
+    #[test]
+    fn approved_increase_with_reduce_only_regime_is_rejected_by_serde() -> Result<(), Box<dyn Error>>
+    {
+        assert_approved_mutation_rejected("regime", json!("reduce_only"))
+    }
+
+    #[test]
+    fn approved_increase_with_halted_regime_is_rejected_by_serde() -> Result<(), Box<dyn Error>> {
+        assert_approved_mutation_rejected("regime", json!("halted"))
+    }
+
+    #[test]
+    fn restrictive_states_preserve_legitimate_reduction_authorization() -> Result<(), Box<dyn Error>>
+    {
+        let reduce_only = reduction_params()?;
+        let assessment = RiskAssessment::new(reduce_only.clone())?;
+        assert_eq!(
+            assessment.authorized_change_notional_per_leg().value(),
+            Decimal::from(50)
+        );
+        let serialized = serde_json::to_value(&assessment)?;
+        assert!(serde_json::from_value::<RiskAssessment>(serialized).is_ok());
+
+        let mut pause_new = reduce_only.clone();
+        pause_new.regime = Regime::Normal;
+        pause_new.kill_state = KillState::PauseNew;
+        pause_new.decision = RiskDecision::Approve;
+        pause_new.reason_codes = vec![RiskReasonCode::Approved];
+        pause_new.explanation = "pause-new state permits a legitimate reduction".to_owned();
+        assert!(RiskAssessment::new(pause_new).is_ok());
+
+        let mut flatten = reduce_only;
+        flatten.regime = Regime::Halted;
+        flatten.kill_state = KillState::Flatten;
+        flatten.decision = RiskDecision::FlattenRequired;
+        flatten.reason_codes = vec![RiskReasonCode::RegimeHalted, RiskReasonCode::KillFlatten];
+        flatten.explanation = "flatten authority permits a legitimate reduction".to_owned();
+        assert!(RiskAssessment::new(flatten).is_ok());
         Ok(())
     }
 
