@@ -176,6 +176,7 @@ pub struct ExecutionConfig {
     pub max_residual_delta: Delta,
     pub max_slippage_bps: Bps,
     pub intent_expiry_ms: DurationMillis,
+    pub max_recovery_attempts: u32,
 }
 
 /// Recorder capacity and non-secret output path. P2 owns persistence behavior.

@@ -88,6 +88,7 @@ session_loss_action = "flatten"
 max_residual_delta = "10.00"
 max_slippage_bps = "5.00"
 intent_expiry_ms = 3000
+max_recovery_attempts = 2
 
 [recording]
 directory = "recordings"

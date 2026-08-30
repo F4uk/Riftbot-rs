@@ -153,6 +153,7 @@ impl AppConfig {
         if self.execution.max_residual_delta.value() < Decimal::ZERO
             || self.execution.max_slippage_bps.value() < Decimal::ZERO
             || self.execution.intent_expiry_ms.0 == 0
+            || self.execution.max_recovery_attempts == 0
         {
             return Err(ConfigError::InvalidExecutionLimits);
         }

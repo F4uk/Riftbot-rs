@@ -108,6 +108,10 @@ identifier!(IntentId, "intent ID");
 identifier!(ModelVersion, "model version");
 identifier!(ClientOrderId, "client order ID");
 identifier!(VenueOrderId, "venue order ID");
+identifier!(CommandId, "execution command ID");
+identifier!(FillId, "fill ID");
+identifier!(EvidenceId, "execution evidence ID");
+identifier!(PreflightId, "execution preflight ID");
 
 #[cfg(test)]
 mod tests {
