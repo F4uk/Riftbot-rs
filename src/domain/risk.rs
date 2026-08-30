@@ -380,6 +380,7 @@ fn validate_assessment(params: &RiskAssessmentParams) -> Result<(), RiskDomainEr
             params.limits.session_loss_required_state,
             KillState::Flatten | KillState::Halt
         )
+        || !valid_exposure_audit(params)
     {
         return Err(RiskDomainError::InvalidAssessment);
     }
@@ -430,6 +431,84 @@ fn validate_assessment(params: &RiskAssessmentParams) -> Result<(), RiskDomainEr
         }
     }
     Ok(())
+}
+
+fn valid_exposure_audit(params: &RiskAssessmentParams) -> bool {
+    let Some(audit) = &params.exposure else {
+        return true;
+    };
+    if audit.long_venue == audit.short_venue
+        || audit.global_delta_candidate_projected != audit.global_delta_current
+        || audit.global_delta_authorized_projected != audit.global_delta_current
+    {
+        return false;
+    }
+    let authorized = params.authorized_change_notional_per_leg.value();
+    let proposed = params.proposed_change_notional_per_leg.value();
+    let current_values = [
+        audit.pair_current_notional_per_leg.value(),
+        audit.long_current_notional.value(),
+        audit.short_current_notional.value(),
+    ];
+    let candidate_values = [
+        audit.pair_candidate_projected_notional_per_leg.value(),
+        audit.long_candidate_projected_notional.value(),
+        audit.short_candidate_projected_notional.value(),
+    ];
+    let authorized_values = [
+        audit.pair_authorized_projected_notional_per_leg.value(),
+        audit.long_authorized_projected_notional.value(),
+        audit.short_authorized_projected_notional.value(),
+    ];
+    for index in 0..current_values.len() {
+        let expected_authorized = if params.input_action == RiskInputAction::IncreaseRisk {
+            current_values[index].checked_add(authorized)
+        } else if params.input_action.is_reduction() {
+            current_values[index].checked_sub(authorized)
+        } else {
+            Some(current_values[index])
+        };
+        if expected_authorized != Some(authorized_values[index]) {
+            return false;
+        }
+    }
+    let candidate_change = if params.input_action == RiskInputAction::IncreaseRisk {
+        candidate_values[0].checked_sub(current_values[0])
+    } else if params.input_action.is_reduction() {
+        current_values[0].checked_sub(candidate_values[0])
+    } else {
+        Some(Decimal::ZERO)
+    };
+    let Some(candidate_change) = candidate_change else {
+        return false;
+    };
+    if candidate_change < Decimal::ZERO || candidate_change > proposed {
+        return false;
+    }
+    for index in 1..current_values.len() {
+        let leg_candidate_change = if params.input_action == RiskInputAction::IncreaseRisk {
+            candidate_values[index].checked_sub(current_values[index])
+        } else if params.input_action.is_reduction() {
+            current_values[index].checked_sub(candidate_values[index])
+        } else {
+            Some(Decimal::ZERO)
+        };
+        if leg_candidate_change != Some(candidate_change) {
+            return false;
+        }
+    }
+    match (audit.session_pnl, audit.session_loss) {
+        (Some(pnl), Some(loss)) => {
+            let expected_loss = if pnl.value() < Decimal::ZERO {
+                Decimal::ZERO.checked_sub(pnl.value())
+            } else {
+                Some(Decimal::ZERO)
+            };
+            expected_loss == Some(loss.value())
+        }
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -628,6 +707,10 @@ mod tests {
         let mut deny_with_size = serde_json::to_value(&valid)?;
         deny_with_size["decision"] = json!("deny");
         assert!(serde_json::from_value::<RiskAssessment>(deny_with_size).is_err());
+
+        let mut inconsistent_audit = serde_json::to_value(&valid)?;
+        inconsistent_audit["exposure"]["pair_authorized_projected_notional_per_leg"] = json!("49");
+        assert!(serde_json::from_value::<RiskAssessment>(inconsistent_audit).is_err());
         Ok(())
     }
 
